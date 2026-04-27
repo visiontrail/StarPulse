@@ -1,0 +1,68 @@
+services:
+  api:
+    build:
+      context: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      STAR_PULSE_DATABASE_URL: postgresql+psycopg://star_pulse:star_pulse@postgres:5432/star_pulse
+      STAR_PULSE_RABBITMQ_URL: amqp://star_pulse:star_pulse@rabbitmq:5672//
+      STAR_PULSE_LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+    command: celery -A app.tasks.celery_app.celery_app worker --loglevel=INFO
+    environment:
+      STAR_PULSE_DATABASE_URL: postgresql+psycopg://star_pulse:star_pulse@postgres:5432/star_pulse
+      STAR_PULSE_RABBITMQ_URL: amqp://star_pulse:star_pulse@rabbitmq:5672//
+      STAR_PULSE_LOG_LEVEL: INFO
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: star_pulse
+      POSTGRES_USER: star_pulse
+      POSTGRES_PASSWORD: star_pulse
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U star_pulse -d star_pulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: star_pulse
+      RABBITMQ_DEFAULT_PASS: star_pulse
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+
