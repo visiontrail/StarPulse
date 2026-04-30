@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.schemas.config_snapshot import ConfigSnapshotSummaryRead
+
 
 class DeviceConnectionCreate(BaseModel):
     protocol: str = Field(default="netconf", max_length=32)
@@ -56,3 +58,11 @@ class DeviceRead(BaseModel):
     updated_at: datetime
     connection: DeviceConnectionRead | None = None
     last_discovery: DeviceDiscoveryRead | None = None
+    last_config_snapshot: ConfigSnapshotSummaryRead | None = None
+    recent_tasks: list[dict[str, object]] = Field(default_factory=list)
+
+
+class DeviceProfileRead(DeviceRead):
+    capabilities: list[str] = Field(default_factory=list)
+    system_info: dict[str, object] = Field(default_factory=dict)
+    safety_summary: dict[str, object] = Field(default_factory=dict)

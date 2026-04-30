@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-ui: "Avenir Next";
+  --font-mono: "SFMono-Regular";
+  color: #26251e;
+  background: #f2f1ed;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(90deg, oklab(0.263084 -0.00230259 0.0124794 / 0.04) 1px, transparent 1px),
+    linear-gradient(0deg, oklab(0.263084 -0.00230259 0.0124794 / 0.035) 1px, transparent 1px),
+    #f2f1ed;
+  background-size: 48px 48px;
+  font-family: var(--font-ui), Avenir Next, ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}

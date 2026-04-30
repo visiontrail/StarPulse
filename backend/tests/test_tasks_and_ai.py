@@ -8,8 +8,13 @@ from app.api.schemas.device import DeviceCreate
 from app.devices.constants import DeviceAccessErrorCode
 from app.devices.service import DeviceService
 from app.netconf.services import NetconfOperationResult
-from app.storage.models import Device, TaskStatus
-from app.tasks.jobs import run_capability_discovery, run_connection_test, sample_health
+from app.storage.models import Device, DeviceConfigSnapshot, TaskStatus
+from app.tasks.jobs import (
+    run_capability_discovery,
+    run_config_snapshot,
+    run_connection_test,
+    sample_health,
+)
 
 
 def test_sample_task_can_run_directly() -> None:
@@ -84,6 +89,70 @@ def test_device_task_api_dispatches_without_leaking_secret(
     assert "api-secret" not in str(body)
 
 
+def test_config_snapshot_api_dispatches_task_with_safe_metadata(
+    client: TestClient, monkeypatch
+) -> None:
+    dispatched: list[str] = []
+
+    def fake_delay(task_id: str) -> None:
+        dispatched.append(task_id)
+
+    monkeypatch.setattr("app.tasks.service.run_config_snapshot.delay", fake_delay)
+
+    device_response = client.post(
+        "/api/v1/devices",
+        json={
+            "name": "sat-router-config-api",
+            "connection": {
+                "host": "192.0.2.32",
+                "username": "netconf",
+                "password": "api-secret",
+            },
+        },
+    )
+    device_id = device_response.json()["id"]
+
+    response = client.post(
+        f"/api/v1/devices/{device_id}/config-snapshots",
+        json={"datastore": "running"},
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["task_type"] == "device.config_snapshot"
+    assert body["metadata"] == {"device_id": device_id, "datastore": "running"}
+    assert dispatched == [body["task_id"]]
+    assert "api-secret" not in str(body)
+
+
+def test_config_snapshot_api_rejects_bad_datastore_without_dispatch(
+    client: TestClient, monkeypatch
+) -> None:
+    dispatched: list[str] = []
+    monkeypatch.setattr("app.tasks.service.run_config_snapshot.delay", dispatched.append)
+
+    device_response = client.post(
+        "/api/v1/devices",
+        json={
+            "name": "sat-router-bad-datastore",
+            "connection": {
+                "host": "192.0.2.33",
+                "username": "netconf",
+                "password": "api-secret",
+            },
+        },
+    )
+    device_id = device_response.json()["id"]
+
+    response = client.post(
+        f"/api/v1/devices/{device_id}/config-snapshots",
+        json={"datastore": "intended"},
+    )
+
+    assert response.status_code == 400
+    assert dispatched == []
+
+
 def test_device_task_api_rejects_missing_device_without_dispatch(
     client: TestClient, monkeypatch
 ) -> None:
@@ -149,6 +218,82 @@ def test_capability_discovery_task_records_result(
     assert device.last_discovery.capabilities == ["urn:ietf:params:netconf:base:1.0"]
 
 
+def test_config_snapshot_task_records_success(
+    db_session: Session, monkeypatch, caplog
+) -> None:
+    task_id, device_id = _create_device_task_fixture(
+        db_session,
+        task_type="device.config_snapshot",
+        metadata={"datastore": "running"},
+    )
+    monkeypatch.setattr("app.tasks.jobs.SessionLocal", _session_factory(db_session))
+
+    class FakeService:
+        def read_config(self, params, datastore):
+            return NetconfOperationResult(
+                ok=True,
+                summary={
+                    "datastore": datastore,
+                    "content_digest": "sha256:config",
+                    "content_length": 48,
+                    "normalized_length": 32,
+                },
+                config_content="<config><password>secret</password></config>",
+                normalized_content="<config><password>secret</password></config>",
+                datastore=datastore,
+                content_digest="sha256:config",
+            )
+
+    monkeypatch.setattr("app.tasks.jobs.create_netconf_service", lambda: FakeService())
+
+    result = run_config_snapshot.run(task_id)
+    db_session.expire_all()
+    task = db_session.query(TaskStatus).filter_by(task_id=task_id).one()
+    snapshot = db_session.query(DeviceConfigSnapshot).one()
+
+    assert result["status"] == "succeeded"
+    assert task.status == "succeeded"
+    assert task.result_summary is not None
+    assert task.result_summary["snapshot_id"] == snapshot.id
+    assert task.result_summary["snapshot"]["content_digest"] == "sha256:config"
+    assert snapshot.device_id == device_id
+    assert snapshot.datastore == "running"
+    assert "secret" not in str(task.result_summary)
+    assert "secret" not in caplog.text
+
+
+def test_config_snapshot_task_records_failure(
+    db_session: Session, monkeypatch
+) -> None:
+    task_id, _ = _create_device_task_fixture(
+        db_session,
+        task_type="device.config_snapshot",
+        metadata={"datastore": "running"},
+    )
+    monkeypatch.setattr("app.tasks.jobs.SessionLocal", _session_factory(db_session))
+
+    class FakeService:
+        def read_config(self, params, datastore):
+            return NetconfOperationResult(
+                ok=False,
+                error_code=DeviceAccessErrorCode.CONNECTION_TIMEOUT,
+                error_message="NETCONF operation timed out",
+                context={"password": "secret", "datastore": datastore},
+            )
+
+    monkeypatch.setattr("app.tasks.jobs.create_netconf_service", lambda: FakeService())
+
+    result = run_config_snapshot.run(task_id)
+    db_session.expire_all()
+    task = db_session.query(TaskStatus).filter_by(task_id=task_id).one()
+
+    assert result["status"] == "failed"
+    assert task.status == "failed"
+    assert task.error_code == "CONNECTION_TIMEOUT"
+    assert task.context_json["password"] == "***REDACTED***"
+    assert db_session.query(DeviceConfigSnapshot).count() == 0
+
+
 def test_connection_test_task_records_standard_error_and_redacted_context(
     db_session: Session, monkeypatch, caplog
 ) -> None:
@@ -177,7 +322,10 @@ def test_connection_test_task_records_standard_error_and_redacted_context(
 
 
 def _create_device_task_fixture(
-    db_session: Session, *, task_type: str = "device.connection_test"
+    db_session: Session,
+    *,
+    task_type: str = "device.connection_test",
+    metadata: dict[str, object] | None = None,
 ) -> tuple[str, int]:
     device = DeviceService(db_session).create_device(
         DeviceCreate(
@@ -194,8 +342,8 @@ def _create_device_task_fixture(
         task_type=task_type,
         status="queued",
         device_id=device.id,
-        metadata_json={"device_id": device.id},
-        context_json={"device_id": device.id},
+        metadata_json={"device_id": device.id} | (metadata or {}),
+        context_json={"device_id": device.id} | (metadata or {}),
     )
     db_session.add(task)
     db_session.commit()

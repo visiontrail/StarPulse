@@ -45,6 +45,16 @@ class NcclientNetconfClient:
                 return {}
             raise mapped from exc
 
+    def get_config(self, params: NetconfConnectionParams, datastore: str) -> str:
+        try:
+            with self._connect(params) as session:
+                result = session.get_config(source=datastore)
+                return str(result)
+        except NetconfError:
+            raise
+        except Exception as exc:
+            raise _map_exception(exc, params) from exc
+
     def _connect(self, params: NetconfConnectionParams):
         try:
             from ncclient import manager

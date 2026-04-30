@@ -34,6 +34,7 @@ Important environment variables:
 - `STAR_PULSE_CELERY_TASK_ALWAYS_EAGER`
 - `STAR_PULSE_NETCONF_DEFAULT_TIMEOUT`
 - `STAR_PULSE_NETCONF_HOSTKEY_VERIFY`
+- `NEXT_PUBLIC_API_BASE_URL` for the frontend, defaulting to `http://localhost:8000/api/v1`
 
 ## Device Access Workflow
 
@@ -67,7 +68,20 @@ Run NETCONF capability discovery:
 curl -X POST http://localhost:8000/api/v1/devices/1/capability-discovery
 ```
 
-Both commands return a task identifier. Query task status with:
+Run a read-only NETCONF configuration snapshot collection:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/devices/1/config-snapshots \
+  -H 'content-type: application/json' \
+  -d '{"datastore": "running"}'
+```
+
+The supported datastore values are `running`, `candidate`, and `startup`; unsupported values return
+a parameter error before any task is dispatched. The worker executes NETCONF `get-config` only. It
+does not call `edit-config`, `commit`, `discard-changes`, `copy-config`, rollback, or equivalent
+write operations.
+
+These commands return a task identifier. Query task status with:
 
 ```bash
 curl http://localhost:8000/api/v1/tasks/<task_id>
@@ -75,12 +89,39 @@ curl http://localhost:8000/api/v1/tasks/<task_id>
 
 Task responses include `queued`, `running`, `succeeded`, or `failed`, the related `device_id`, safe
 result summaries, standard error codes, safe messages, and redacted diagnostic context. Supported
-standard error codes are `DEVICE_UNREACHABLE`, `CONNECTION_TIMEOUT`, `AUTH_FAILED`,
+standard error codes are `INVALID_PARAMETER`, `DEVICE_UNREACHABLE`, `CONNECTION_TIMEOUT`, `AUTH_FAILED`,
 `NETCONF_PROTOCOL_ERROR`, `CREDENTIAL_UNAVAILABLE`, and `INTERNAL_ERROR`.
 
-API and worker logs include structured fields for `action`, `task_id`, `device_id`, `status`,
-`duration_ms`, and, when applicable, `error_code`. Passwords, private keys, passphrases, and resolved
-credential values must not be included in task metadata, API responses, discovery results, or logs.
+API and worker logs include structured fields for `action`, `task_id`, `device_id`, `datastore`,
+`status`, `duration_ms`, and, when applicable, `error_code`. Passwords, private keys, passphrases,
+resolved credential values, and uncontrolled full configuration bodies must not be included in task
+metadata, API responses, snapshot summaries, discovery results, or logs.
+
+## Device Profile and Snapshots
+
+Read a device profile:
+
+```bash
+curl http://localhost:8000/api/v1/devices/1/profile
+```
+
+The profile aggregates the device connection summary, status, discovery capabilities, system info,
+last configuration snapshot, recent task summaries, and a safety summary. The regular device detail
+response also includes the last configuration snapshot and recent task summaries.
+
+List configuration snapshots:
+
+```bash
+curl 'http://localhost:8000/api/v1/devices/1/config-snapshots?limit=20'
+```
+
+Snapshot responses are intentionally summary-first: `datastore`, `content_digest`, `collected_at`,
+`diff_summary`, and safe summary fields. They do not expose credentials or raw full configuration
+content. Recent device tasks are available at:
+
+```bash
+curl 'http://localhost:8000/api/v1/devices/1/tasks?limit=10'
+```
 
 ## NETCONF Mock Server Integration Tests
 
@@ -117,6 +158,23 @@ This starts the API service, PostgreSQL, RabbitMQ, and a Celery worker through t
 cd backend
 ./scripts/test.sh
 ./scripts/lint.sh
+```
+
+Frontend validation:
+
+```bash
+cd ../frontend
+npm install
+npm run typecheck
+npm run lint
+npm run build
+```
+
+Run the frontend locally:
+
+```bash
+cd frontend
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1 npm run dev
 ```
 
 ## Phase One Boundary

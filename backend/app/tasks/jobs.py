@@ -6,6 +6,7 @@ from time import monotonic
 
 from app.common.redaction import redact_sensitive
 from app.core.config import get_settings
+from app.devices.config_snapshots import ConfigSnapshotService
 from app.devices.constants import DeviceAccessErrorCode, DeviceStatus, DeviceTaskStatus
 from app.devices.credentials import CredentialService, CredentialUnavailableError
 from app.devices.repository import DeviceRepository
@@ -33,6 +34,11 @@ def run_capability_discovery(task_id: str) -> dict[str, object]:
     return _run_device_task(task_id, action="capability_discovery")
 
 
+@celery_app.task(name="star_pulse.device_config_snapshot")
+def run_config_snapshot(task_id: str) -> dict[str, object]:
+    return _run_device_task(task_id, action="config_snapshot")
+
+
 def create_netconf_service() -> NetconfService:
     return NetconfService()
 
@@ -53,6 +59,8 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
             service = create_netconf_service()
             if action == "connection_test":
                 result = service.test_connection(params)
+            elif action == "config_snapshot":
+                result = service.read_config(params, _task_datastore(task))
             else:
                 result = service.discover_capabilities(params)
 
@@ -78,12 +86,27 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
                     discovered_at=datetime.now(UTC),
                     summary=result.summary,
                 )
+            if action == "config_snapshot":
+                snapshot_result = ConfigSnapshotService(session).save_read_result(
+                    device_id=task.device_id or 0,
+                    source_task_id=task.task_id,
+                    datastore=_task_datastore(task),
+                    result=result,
+                    collected_at=datetime.now(UTC),
+                )
+                result_summary = {
+                    "ok": True,
+                    "snapshot_id": snapshot_result.snapshot.id,
+                    "snapshot": snapshot_result.snapshot.summary,
+                }
+            else:
+                result_summary = result.summary
 
             repository.update_device_status(task.device_id or 0, DeviceStatus.ONLINE)
             repository.update_task_status(
                 task,
                 status=DeviceTaskStatus.SUCCEEDED,
-                result_summary=result.summary,
+                result_summary=result_summary,
                 context=_safe_task_context(task, started_at),
                 completed_at=datetime.now(UTC),
             )
@@ -175,10 +198,18 @@ def _mark_failed(
 
 
 def _safe_task_context(task: TaskStatus, started_at: float) -> dict[str, object]:
-    return {
+    context = {
         "device_id": task.device_id,
         "duration_ms": _duration_ms(started_at),
     }
+    if task.metadata_json.get("datastore") is not None:
+        context["datastore"] = task.metadata_json["datastore"]
+    return context
+
+
+def _task_datastore(task: TaskStatus) -> str:
+    value = task.metadata_json.get("datastore")
+    return str(value or "running")
 
 
 def _log_task(
@@ -195,6 +226,7 @@ def _log_task(
             "action": f"device_task_{status}",
             "task_id": task.task_id,
             "device_id": task.device_id,
+            "datastore": task.metadata_json.get("datastore"),
             "status": status,
             "error_code": error_code.value if error_code else None,
             "duration_ms": _duration_ms(started_at),

@@ -22,9 +22,20 @@ class DeviceTaskStatus(StrEnum):
 class DeviceTaskType(StrEnum):
     CONNECTION_TEST = "device.connection_test"
     CAPABILITY_DISCOVERY = "device.capability_discovery"
+    CONFIG_SNAPSHOT = "device.config_snapshot"
+
+
+class DeviceConfigDatastore(StrEnum):
+    RUNNING = "running"
+    CANDIDATE = "candidate"
+    STARTUP = "startup"
+
+
+SUPPORTED_CONFIG_DATASTORES = tuple(datastore.value for datastore in DeviceConfigDatastore)
 
 
 class DeviceAccessErrorCode(StrEnum):
+    INVALID_PARAMETER = "INVALID_PARAMETER"
     DEVICE_UNREACHABLE = "DEVICE_UNREACHABLE"
     CONNECTION_TIMEOUT = "CONNECTION_TIMEOUT"
     AUTH_FAILED = "AUTH_FAILED"

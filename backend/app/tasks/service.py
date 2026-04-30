@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from app.common.redaction import redact_sensitive
 from app.devices.constants import DeviceTaskStatus, DeviceTaskType
 from app.storage.models import TaskStatus
-from app.tasks.jobs import run_capability_discovery, run_connection_test, sample_health
+from app.tasks.jobs import (
+    run_capability_discovery,
+    run_config_snapshot,
+    run_connection_test,
+    sample_health,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,18 +49,34 @@ class TaskService:
         self._log_dispatch(task_status)
         return task_status
 
+    def submit_config_snapshot(self, device_id: int, datastore: str) -> TaskStatus:
+        task_status = self._create_device_task(
+            DeviceTaskType.CONFIG_SNAPSHOT,
+            device_id,
+            metadata={"datastore": datastore},
+        )
+        run_config_snapshot.delay(task_status.task_id)
+        self._log_dispatch(task_status)
+        return task_status
+
     def get_task(self, task_id: str) -> TaskStatus | None:
         return self.session.scalar(select(TaskStatus).where(TaskStatus.task_id == task_id))
 
-    def _create_device_task(self, task_type: DeviceTaskType, device_id: int) -> TaskStatus:
+    def _create_device_task(
+        self,
+        task_type: DeviceTaskType,
+        device_id: int,
+        metadata: dict[str, object] | None = None,
+    ) -> TaskStatus:
         task_id = str(uuid4())
+        safe_metadata = {"device_id": device_id} | dict(redact_sensitive(metadata or {}))
         task_status = TaskStatus(
             task_id=task_id,
             task_type=task_type,
             status=DeviceTaskStatus.QUEUED,
             device_id=device_id,
-            metadata_json={"device_id": device_id},
-            context_json={"device_id": device_id},
+            metadata_json=safe_metadata,
+            context_json=safe_metadata,
         )
         self.session.add(task_status)
         self.session.commit()
@@ -69,7 +90,9 @@ class TaskService:
                 "action": "device_task_queued",
                 "task_id": task_status.task_id,
                 "device_id": task_status.device_id,
+                "datastore": task_status.metadata_json.get("datastore"),
                 "status": task_status.status,
+                "error_code": None,
                 "duration_ms": 0,
             },
         )

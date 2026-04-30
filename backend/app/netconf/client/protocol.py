@@ -25,3 +25,6 @@ class NetconfClient(Protocol):
 
     def get_system_info(self, params: NetconfConnectionParams) -> dict[str, object]:
         raise NotImplementedError
+
+    def get_config(self, params: NetconfConnectionParams, datastore: str) -> str:
+        raise NotImplementedError

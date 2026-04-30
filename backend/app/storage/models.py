@@ -36,6 +36,13 @@ class Device(TimestampMixin, Base):
         back_populates="device", cascade="all, delete-orphan", uselist=False, lazy="selectin"
     )
 
+    config_snapshots: Mapped[list[DeviceConfigSnapshot]] = relationship(
+        back_populates="device",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by=lambda: (DeviceConfigSnapshot.collected_at.desc(), DeviceConfigSnapshot.id.desc()),
+    )
+
 
 class DeviceConnectionConfig(TimestampMixin, Base):
     __tablename__ = "device_connection_configs"
@@ -108,3 +115,20 @@ class DeviceDiscoveryResult(TimestampMixin, Base):
     summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
     device: Mapped[Device] = relationship(back_populates="last_discovery")
+
+
+class DeviceConfigSnapshot(TimestampMixin, Base):
+    __tablename__ = "device_config_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False, index=True)
+    source_task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    datastore: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content_digest: Mapped[str] = mapped_column(String(128), nullable=False)
+    collected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    diff_summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+    device: Mapped[Device] = relationship(back_populates="config_snapshots")

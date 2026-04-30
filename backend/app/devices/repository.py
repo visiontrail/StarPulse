@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.storage.models import Device, DeviceConnectionConfig, DeviceDiscoveryResult, TaskStatus
+from app.storage.models import (
+    Device,
+    DeviceConfigSnapshot,
+    DeviceConnectionConfig,
+    DeviceDiscoveryResult,
+    TaskStatus,
+)
 from app.storage.repositories import Repository
 
 
@@ -17,8 +23,11 @@ class DeviceRepository(Repository[Device]):
         return list(
             self.session.scalars(
                 select(Device).options(
-                    selectinload(Device.connection), selectinload(Device.last_discovery)
+                    selectinload(Device.connection),
+                    selectinload(Device.last_discovery),
+                    selectinload(Device.config_snapshots),
                 )
+                .execution_options(populate_existing=True)
             ).all()
         )
 
@@ -26,7 +35,12 @@ class DeviceRepository(Repository[Device]):
         return self.session.scalar(
             select(Device)
             .where(Device.id == device_id)
-            .options(selectinload(Device.connection), selectinload(Device.last_discovery))
+            .options(
+                selectinload(Device.connection),
+                selectinload(Device.last_discovery),
+                selectinload(Device.config_snapshots),
+            )
+            .execution_options(populate_existing=True)
         )
 
     def get_connection_for_device(self, device_id: int) -> DeviceConnectionConfig | None:
@@ -73,6 +87,97 @@ class DeviceRepository(Repository[Device]):
             result.summary = summary
         self.session.flush()
         return result
+
+    def create_config_snapshot(
+        self,
+        *,
+        device_id: int,
+        source_task_id: str,
+        datastore: str,
+        content_digest: str,
+        collected_at: datetime,
+        diff_summary: dict[str, object],
+        summary: dict[str, object],
+    ) -> DeviceConfigSnapshot:
+        snapshot = DeviceConfigSnapshot(
+            device_id=device_id,
+            source_task_id=source_task_id,
+            datastore=datastore,
+            content_digest=content_digest,
+            collected_at=collected_at,
+            diff_summary=diff_summary,
+            summary=summary,
+        )
+        self.session.add(snapshot)
+        self.session.flush()
+        self.session.refresh(snapshot)
+        return snapshot
+
+    def get_previous_config_snapshot(
+        self,
+        *,
+        device_id: int,
+        datastore: str,
+        before_snapshot_id: int | None = None,
+    ) -> DeviceConfigSnapshot | None:
+        query = (
+            select(DeviceConfigSnapshot)
+            .where(
+                DeviceConfigSnapshot.device_id == device_id,
+                DeviceConfigSnapshot.datastore == datastore,
+            )
+            .order_by(desc(DeviceConfigSnapshot.collected_at), desc(DeviceConfigSnapshot.id))
+        )
+        if before_snapshot_id is not None:
+            current = self.session.get(DeviceConfigSnapshot, before_snapshot_id)
+            if current is None:
+                return None
+            query = query.where(
+                (DeviceConfigSnapshot.collected_at < current.collected_at)
+                | (
+                    (DeviceConfigSnapshot.collected_at == current.collected_at)
+                    & (DeviceConfigSnapshot.id < current.id)
+                )
+            )
+        return self.session.scalar(query.limit(1))
+
+    def get_last_config_snapshot(
+        self, *, device_id: int, datastore: str | None = None
+    ) -> DeviceConfigSnapshot | None:
+        query = select(DeviceConfigSnapshot).where(DeviceConfigSnapshot.device_id == device_id)
+        if datastore is not None:
+            query = query.where(DeviceConfigSnapshot.datastore == datastore)
+        return self.session.scalar(
+            query.order_by(
+                desc(DeviceConfigSnapshot.collected_at), desc(DeviceConfigSnapshot.id)
+            ).limit(1)
+        )
+
+    def list_config_snapshots(
+        self, *, device_id: int, limit: int = 20, offset: int = 0
+    ) -> list[DeviceConfigSnapshot]:
+        safe_limit = min(max(limit, 1), 100)
+        safe_offset = max(offset, 0)
+        return list(
+            self.session.scalars(
+                select(DeviceConfigSnapshot)
+                .where(DeviceConfigSnapshot.device_id == device_id)
+                .order_by(desc(DeviceConfigSnapshot.collected_at), desc(DeviceConfigSnapshot.id))
+                .limit(safe_limit)
+                .offset(safe_offset)
+            ).all()
+        )
+
+    def list_recent_tasks(self, *, device_id: int, limit: int = 10) -> list[TaskStatus]:
+        safe_limit = min(max(limit, 1), 50)
+        return list(
+            self.session.scalars(
+                select(TaskStatus)
+                .where(TaskStatus.device_id == device_id)
+                .order_by(desc(TaskStatus.created_at), desc(TaskStatus.id))
+                .limit(safe_limit)
+            ).all()
+        )
 
     def update_task_status(
         self,
