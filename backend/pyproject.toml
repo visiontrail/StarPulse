@@ -39,6 +39,9 @@ include = ["app*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+markers = [
+    "integration: tests that require external services",
+]
 
 [tool.ruff]
 line-length = 100
