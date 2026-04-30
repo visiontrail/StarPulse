@@ -16,6 +16,12 @@ class TaskRead(BaseModel):
     task_id: str
     task_type: str
     status: str
+    device_id: int | None = None
+    result_summary: dict[str, object] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    context: dict[str, object] = Field(default_factory=dict, validation_alias="context_json")
+    completed_at: datetime | None = None
     metadata: dict[str, object] = Field(validation_alias="metadata_json")
     created_at: datetime
     updated_at: datetime

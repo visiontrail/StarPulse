@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     celery_result_backend: str | None = None
     celery_task_always_eager: bool = False
 
+    netconf_default_timeout: int = 30
+    netconf_hostkey_verify: bool = False
+
     ai_agent_sdk_provider: str = "claude-agent-sdk"
     ai_agent_sdk_enabled: bool = False
 
@@ -33,4 +36,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

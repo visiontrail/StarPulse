@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.common.redaction import redact_sensitive
+from app.devices.constants import DeviceTaskStatus, DeviceTaskType
 from app.storage.models import TaskStatus
-from app.tasks.jobs import sample_health
+from app.tasks.jobs import run_capability_discovery, run_connection_test, sample_health
+
+logger = logging.getLogger(__name__)
 
 
 class TaskService:
@@ -18,8 +23,8 @@ class TaskService:
         task_status = TaskStatus(
             task_id=task_id,
             task_type=task_type,
-            status="queued",
-            metadata_json={"payload": payload},
+            status=DeviceTaskStatus.QUEUED,
+            metadata_json={"payload": redact_sensitive(payload)},
         )
         self.session.add(task_status)
         self.session.commit()
@@ -27,5 +32,44 @@ class TaskService:
         sample_health.delay(task_id, payload)
         return task_status
 
+    def submit_connection_test(self, device_id: int) -> TaskStatus:
+        task_status = self._create_device_task(DeviceTaskType.CONNECTION_TEST, device_id)
+        run_connection_test.delay(task_status.task_id)
+        self._log_dispatch(task_status)
+        return task_status
+
+    def submit_capability_discovery(self, device_id: int) -> TaskStatus:
+        task_status = self._create_device_task(DeviceTaskType.CAPABILITY_DISCOVERY, device_id)
+        run_capability_discovery.delay(task_status.task_id)
+        self._log_dispatch(task_status)
+        return task_status
+
     def get_task(self, task_id: str) -> TaskStatus | None:
         return self.session.scalar(select(TaskStatus).where(TaskStatus.task_id == task_id))
+
+    def _create_device_task(self, task_type: DeviceTaskType, device_id: int) -> TaskStatus:
+        task_id = str(uuid4())
+        task_status = TaskStatus(
+            task_id=task_id,
+            task_type=task_type,
+            status=DeviceTaskStatus.QUEUED,
+            device_id=device_id,
+            metadata_json={"device_id": device_id},
+            context_json={"device_id": device_id},
+        )
+        self.session.add(task_status)
+        self.session.commit()
+        self.session.refresh(task_status)
+        return task_status
+
+    def _log_dispatch(self, task_status: TaskStatus) -> None:
+        logger.info(
+            "device task queued",
+            extra={
+                "action": "device_task_queued",
+                "task_id": task_status.task_id,
+                "device_id": task_status.device_id,
+                "status": task_status.status,
+                "duration_ms": 0,
+            },
+        )

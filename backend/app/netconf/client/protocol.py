@@ -10,6 +10,8 @@ class NetconfConnectionParams:
     port: int = 830
     username: str = ""
     password: str | None = None
+    private_key: str | None = None
+    passphrase: str | None = None
     timeout: int = 30
     hostkey_verify: bool = False
 
@@ -21,3 +23,5 @@ class NetconfClient(Protocol):
     def validate_connection(self, params: NetconfConnectionParams) -> bool:
         raise NotImplementedError
 
+    def get_system_info(self, params: NetconfConnectionParams) -> dict[str, object]:
+        raise NotImplementedError

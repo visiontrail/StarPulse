@@ -1,4 +1,3 @@
-from app.netconf.services.service import NetconfService
+from app.netconf.services.service import NetconfOperationResult, NetconfService
 
-__all__ = ["NetconfService"]
-
+__all__ = ["NetconfOperationResult", "NetconfService"]
