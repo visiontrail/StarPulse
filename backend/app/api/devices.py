@@ -12,6 +12,7 @@ from app.api.schemas.device import DeviceCreate, DeviceProfileRead, DeviceRead
 from app.api.schemas.task import TaskRead
 from app.auth.constants import (
     PERM_DEVICE_COLLECT,
+    PERM_DEVICE_MANAGE,
     PERM_DEVICE_READ,
     PERM_SNAPSHOT_READ,
     PERM_TASK_READ,
@@ -33,21 +34,29 @@ router = APIRouter(prefix="/devices", tags=["devices"])
     "",
     response_model=DeviceRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[require_permission(PERM_DEVICE_READ)],
+    dependencies=[require_permission(PERM_DEVICE_MANAGE)],
 )
 def create_device(payload: DeviceCreate, session: SessionDep) -> DeviceRead:
     device = DeviceService(session).create_device(payload)
     return DeviceRead.model_validate(device)
 
 
-@router.get("", response_model=list[DeviceRead], dependencies=[require_permission(PERM_DEVICE_READ)])
+@router.get(
+    "",
+    response_model=list[DeviceRead],
+    dependencies=[require_permission(PERM_DEVICE_READ)],
+)
 def list_devices(session: SessionDep) -> list[DeviceRead]:
     devices = DeviceService(session).list_devices()
     repository = DeviceRepository(session)
     return [_device_read(device.id, session, repository=repository) for device in devices]
 
 
-@router.get("/{device_id}", response_model=DeviceRead, dependencies=[require_permission(PERM_DEVICE_READ)])
+@router.get(
+    "/{device_id}",
+    response_model=DeviceRead,
+    dependencies=[require_permission(PERM_DEVICE_READ)],
+)
 def get_device(device_id: int, session: SessionDep) -> DeviceRead:
     return _device_read(device_id, session)
 

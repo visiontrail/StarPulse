@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.schemas.task import TaskCreate, TaskRead
-from app.auth.constants import PERM_TASK_READ
+from app.auth.constants import PERM_SYSTEM_CONFIG, PERM_TASK_READ
 from app.auth.dependencies import SessionDep, require_permission
 from app.tasks.service import TaskService
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
     "",
     response_model=TaskRead,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[require_permission(PERM_TASK_READ)],
+    dependencies=[require_permission(PERM_SYSTEM_CONFIG)],
 )
 def submit_task(payload: TaskCreate, session: SessionDep) -> TaskRead:
     task_status = TaskService(session).submit_sample_task(payload.task_type, payload.payload)

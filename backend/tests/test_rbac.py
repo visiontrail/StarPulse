@@ -11,6 +11,23 @@ def test_viewer_can_read_devices(client: TestClient, viewer_user):
     assert resp.status_code == 200
 
 
+def test_viewer_cannot_create_device_or_submit_generic_task(client: TestClient, viewer_user):
+    token = get_token(client, "viewer1")
+    device_resp = client.post(
+        "/api/v1/devices",
+        json={"name": "viewer-created-device"},
+        headers=auth_headers(token),
+    )
+    task_resp = client.post(
+        "/api/v1/tasks",
+        json={"task_type": "sample.health", "payload": {"kind": "health"}},
+        headers=auth_headers(token),
+    )
+
+    assert device_resp.status_code == 403
+    assert task_resp.status_code == 403
+
+
 def test_viewer_cannot_collect(client: TestClient, viewer_user):
     token = get_token(client, "viewer1")
     resp = client.post(

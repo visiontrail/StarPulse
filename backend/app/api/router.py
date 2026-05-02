@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import admin, audit, auth, change_requests, devices, health, tasks
+from app.auth.dependencies import get_current_user
 from app.auth.seed import seed_permissions_and_roles
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -48,12 +49,15 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    protected_api = APIRouter(prefix="/api/v1", dependencies=[Depends(get_current_user)])
+    protected_api.include_router(devices.router)
+    protected_api.include_router(tasks.router)
+    protected_api.include_router(admin.router)
+    protected_api.include_router(audit.router)
+    protected_api.include_router(change_requests.router)
+
     app.include_router(health.router)
     app.include_router(auth.router, prefix="/api/v1")
-    app.include_router(devices.router, prefix="/api/v1")
-    app.include_router(tasks.router, prefix="/api/v1")
-    app.include_router(admin.router, prefix="/api/v1")
-    app.include_router(audit.router, prefix="/api/v1")
-    app.include_router(change_requests.router, prefix="/api/v1")
+    app.include_router(protected_api)
 
     return app

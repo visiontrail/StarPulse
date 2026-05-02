@@ -11,6 +11,7 @@ from app.common.time import utc_now
 from app.devices.constants import SUPPORTED_CONFIG_DATASTORES
 from app.devices.repository import DeviceRepository
 from app.storage.models import DeviceConfigChangeRequest, User
+from app.tasks.service import TaskService
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,15 @@ class ChangeRequestService:
             metadata={"approval_note": approval_note},
             ip_address=ip_address,
         )
+        task_status = TaskService(self.session).submit_config_change(
+            device_id=cr.device_id,
+            change_request_id=cr.id,
+            actor_user_id=actor.id,
+            datastore=cr.datastore,
+        )
+        cr.status = "queued"
+        cr.executor_id = actor.id
+        cr.execution_task_id = task_status.task_id
         self._repo.save(cr)
         self.session.commit()
         self.session.refresh(cr)
@@ -159,10 +169,32 @@ class ChangeRequestService:
         ip_address: str | None = None,
     ) -> DeviceConfigChangeRequest:
         if datastore not in SUPPORTED_CONFIG_DATASTORES:
+            write_audit_event(
+                session=self.session,
+                action=AuditAction.VALIDATION_FAILED,
+                outcome=AuditOutcome.FAILURE,
+                actor_user_id=actor.id,
+                target_type="device",
+                target_id=str(device_id),
+                metadata={"reason": "unsupported_datastore", "datastore": datastore},
+                ip_address=ip_address,
+            )
+            self.session.commit()
             raise ChangeRequestError(f"Unsupported datastore: {datastore}")
 
         device = DeviceRepository(self.session).get_with_connection(device_id)
         if device is None:
+            write_audit_event(
+                session=self.session,
+                action=AuditAction.VALIDATION_FAILED,
+                outcome=AuditOutcome.FAILURE,
+                actor_user_id=actor.id,
+                target_type="device",
+                target_id=str(device_id),
+                metadata={"reason": "device_not_found"},
+                ip_address=ip_address,
+            )
+            self.session.commit()
             raise ChangeRequestError("Device not found")
 
         cr = self._repo.create(
@@ -171,7 +203,7 @@ class ChangeRequestService:
             change_summary=change_summary,
             change_ref=change_ref,
             reason=reason,
-            status="approved",
+            status="queued",
             submitter_id=actor.id,
             approver_id=actor.id,
             direct_execute=True,
@@ -194,8 +226,6 @@ class ChangeRequestService:
             },
             ip_address=ip_address,
         )
-        from app.tasks.service import TaskService
-
         task_status = TaskService(self.session).submit_config_change(
             device_id=device_id,
             change_request_id=cr.id,

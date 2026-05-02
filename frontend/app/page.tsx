@@ -31,6 +31,8 @@ import type {
   ConfigSnapshot,
   Device,
   DeviceProfile,
+  Permission,
+  Role,
   SnapshotListResponse,
   TaskRead,
   UserRead
@@ -322,6 +324,7 @@ function ChangesTab() {
 
   const canApprove = hasPermission(PERM.DEVICE_CHANGE_APPROVE);
   const canExecute = hasPermission(PERM.DEVICE_CHANGE_EXECUTE);
+  const canSubmit = hasPermission(PERM.DEVICE_CHANGE_SUBMIT);
 
   const loadChanges = useCallback(async () => {
     setLoading(true);
@@ -371,6 +374,7 @@ function ChangesTab() {
 
       {error ? <ErrorPanel message={error} onRetry={() => void loadChanges()} /> : null}
 
+      {canSubmit && <ChangeRequestForm onSuccess={() => void loadChanges()} />}
       {canExecute && <DirectExecuteForm onSuccess={() => void loadChanges()} />}
 
       {changes.length === 0 && !loading ? (
@@ -418,6 +422,100 @@ function ChangesTab() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
+  const [deviceId, setDeviceId] = useState("");
+  const [datastore, setDatastore] = useState("running");
+  const [summary, setSummary] = useState("");
+  const [changeRef, setChangeRef] = useState("");
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      await api.submitChangeRequest({
+        device_id: Number(deviceId),
+        datastore,
+        change_summary: summary,
+        change_ref: changeRef.trim() || undefined,
+        reason
+      });
+      setDeviceId("");
+      setSummary("");
+      setChangeRef("");
+      setReason("");
+      onSuccess();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded border border-warm bg-canvas/95 p-4">
+      <h3 className="mb-3 font-semibold text-sm">Submit Change Request</h3>
+      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <FieldLabel>Device ID</FieldLabel>
+            <input
+              type="number"
+              required
+              min={1}
+              value={deviceId}
+              onChange={(e) => setDeviceId(e.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <FieldLabel>Datastore</FieldLabel>
+            <DatastoreSelect value={datastore} onValueChange={setDatastore} />
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <FieldLabel>Change summary</FieldLabel>
+            <input
+              type="text"
+              required
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <FieldLabel>Change ref</FieldLabel>
+            <input
+              type="text"
+              value={changeRef}
+              onChange={(e) => setChangeRef(e.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+            />
+          </div>
+        </div>
+        <div>
+          <FieldLabel>Reason</FieldLabel>
+          <textarea
+            required
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+          />
+        </div>
+        {error ? <p className="text-xs text-error">{error}</p> : null}
+        <Button type="submit" busy={loading}>
+          <Send className="h-4 w-4" /> Submit
+        </Button>
+      </form>
     </div>
   );
 }
@@ -515,13 +613,23 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
 
 function AdminTab() {
   const [users, setUsers] = useState<UserRead[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [permissions, setPermissions] = useState<Permission[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadUsers = useCallback(async () => {
+  const loadAdminData = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      setUsers(await api.listUsers());
+      const [nextUsers, nextRoles, nextPermissions] = await Promise.all([
+        api.listUsers(),
+        api.listRoles(),
+        api.listPermissions()
+      ]);
+      setUsers(nextUsers);
+      setRoles(nextRoles);
+      setPermissions(nextPermissions);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -529,30 +637,308 @@ function AdminTab() {
     }
   }, []);
 
-  useEffect(() => { void loadUsers(); }, [loadUsers]);
+  useEffect(() => { void loadAdminData(); }, [loadAdminData]);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">User Management</h2>
-        <Button onClick={() => void loadUsers()} busy={loading} className="h-9 w-9 px-0">
-          <RefreshCw className="h-4 w-4" aria-hidden />
-        </Button>
-      </div>
-      {error ? <ErrorPanel message={error} onRetry={() => void loadUsers()} /> : null}
-      <div className="space-y-2">
-        {users.map((u) => (
-          <div key={u.id} className="flex items-center justify-between rounded border border-warm bg-canvas/95 p-3">
-            <div>
-              <p className="text-sm font-semibold">{u.display_name}</p>
-              <p className="text-xs text-muted">
-                {u.username} · {u.roles.map((r) => r.name).join(", ") || "no roles"}
-              </p>
+    <div className="mx-auto grid max-w-6xl gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Access Control</h2>
+          <Button onClick={() => void loadAdminData()} busy={loading} className="h-9 w-9 px-0">
+            <RefreshCw className="h-4 w-4" aria-hidden />
+          </Button>
+        </div>
+        {error ? <ErrorPanel message={error} onRetry={() => void loadAdminData()} /> : null}
+        <CreateUserForm onSuccess={() => void loadAdminData()} />
+        <div className="space-y-2">
+          {users.map((u) => (
+            <div key={u.id} className="rounded border border-warm bg-canvas/95 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">{u.display_name}</p>
+                  <p className="text-xs text-muted">
+                    {u.username} · {u.roles.map((r) => r.name).join(", ") || "no roles"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={u.is_active ? "online" : "offline"} />
+                  <Button
+                    onClick={() => void toggleUser(u)}
+                    className="h-8 px-2 text-xs"
+                  >
+                    {u.is_active ? "Disable" : "Enable"}
+                  </Button>
+                </div>
+              </div>
+              <UserRoleControls
+                user={u}
+                roles={roles}
+                onChange={() => void loadAdminData()}
+              />
             </div>
-            <StatusBadge status={u.is_active ? "online" : "offline"} />
+          ))}
+        </div>
+      </div>
+      <aside className="space-y-4">
+        <RolePermissionEditor
+          roles={roles}
+          permissions={permissions}
+          onChange={() => void loadAdminData()}
+        />
+        <div className="rounded border border-warm bg-canvas/95 p-4">
+          <h3 className="mb-3 text-sm font-semibold">System Configuration</h3>
+          <div className="space-y-2 text-xs text-muted">
+            <p>JWT, CORS, cookie, audit retention</p>
+            <StatusBadge status="ready" />
           </div>
+        </div>
+      </aside>
+    </div>
+  );
+
+  async function toggleUser(user: UserRead) {
+    setError(null);
+    try {
+      if (user.is_active) await api.disableUser(user.id);
+      else await api.enableUser(user.id);
+      await loadAdminData();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+}
+
+function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      await api.createUser({
+        username,
+        display_name: displayName,
+        password
+      });
+      setUsername("");
+      setDisplayName("");
+      setPassword("");
+      onSuccess();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded border border-warm bg-canvas/95 p-4">
+      <h3 className="mb-3 text-sm font-semibold">Create User</h3>
+      <form onSubmit={(e) => void handleSubmit(e)} className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto]">
+        <div>
+          <FieldLabel>Username</FieldLabel>
+          <input
+            required
+            minLength={2}
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <FieldLabel>Display name</FieldLabel>
+          <input
+            required
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <FieldLabel>Password</FieldLabel>
+          <input
+            required
+            type="password"
+            minLength={8}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+          />
+        </div>
+        <Button type="submit" busy={loading} className="mt-5">
+          Create
+        </Button>
+      </form>
+      {error ? <p className="mt-2 text-xs text-error">{error}</p> : null}
+    </div>
+  );
+}
+
+function UserRoleControls({
+  user,
+  roles,
+  onChange
+}: {
+  user: UserRead;
+  roles: Role[];
+  onChange: () => void;
+}) {
+  const assignedRoleIds = new Set(user.roles.map((role) => role.id));
+  const availableRoles = roles.filter((role) => !assignedRoleIds.has(role.id));
+  const [roleId, setRoleId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function assignSelectedRole() {
+    if (!roleId) return;
+    setError(null);
+    try {
+      await api.assignRole(user.id, Number(roleId));
+      setRoleId("");
+      onChange();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
+  async function removeRole(role: Role) {
+    setError(null);
+    try {
+      await api.removeRole(user.id, role.id);
+      onChange();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-warm pt-3">
+      <div className="flex flex-wrap gap-2">
+        {user.roles.map((role) => (
+          <button
+            key={role.id}
+            onClick={() => void removeRole(role)}
+            className="rounded border border-warm bg-paper px-2 py-1 font-mono text-[11px] text-muted hover:border-error hover:text-error"
+          >
+            {role.name} x
+          </button>
         ))}
       </div>
+      <div className="mt-3 flex gap-2">
+        <select
+          value={roleId}
+          onChange={(e) => setRoleId(e.target.value)}
+          className="h-8 min-w-40 rounded border border-warm bg-paper px-2 text-sm"
+        >
+          <option value="">Role</option>
+          {availableRoles.map((role) => (
+            <option key={role.id} value={role.id}>{role.name}</option>
+          ))}
+        </select>
+        <Button
+          onClick={() => void assignSelectedRole()}
+          disabled={!roleId}
+          className="h-8 px-2 text-xs"
+        >
+          Assign
+        </Button>
+      </div>
+      {error ? <p className="mt-2 text-xs text-error">{error}</p> : null}
+    </div>
+  );
+}
+
+function RolePermissionEditor({
+  roles,
+  permissions,
+  onChange
+}: {
+  roles: Role[];
+  permissions: Permission[];
+  onChange: () => void;
+}) {
+  const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
+  const [selectedPermissionIds, setSelectedPermissionIds] = useState<Set<number>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedRole = roles.find((role) => role.id === selectedRoleId) ?? roles[0] ?? null;
+
+  useEffect(() => {
+    if (selectedRoleId !== null || roles.length === 0) return;
+    setSelectedRoleId(roles[0].id);
+  }, [roles, selectedRoleId]);
+
+  useEffect(() => {
+    if (!selectedRole) return;
+    setSelectedPermissionIds(new Set(selectedRole.permissions.map((perm) => perm.id)));
+  }, [selectedRole]);
+
+  async function savePermissions() {
+    if (!selectedRole) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.updateRolePermissions(selectedRole.id, Array.from(selectedPermissionIds));
+      onChange();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function togglePermission(permissionId: number) {
+    setSelectedPermissionIds((current) => {
+      const next = new Set(current);
+      if (next.has(permissionId)) next.delete(permissionId);
+      else next.add(permissionId);
+      return next;
+    });
+  }
+
+  return (
+    <div className="rounded border border-warm bg-canvas/95 p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Roles & Permissions</h3>
+      </div>
+      <select
+        value={selectedRole?.id ?? ""}
+        onChange={(e) => setSelectedRoleId(Number(e.target.value))}
+        className="mt-3 h-9 w-full rounded border border-warm bg-paper px-2 text-sm"
+      >
+        {roles.map((role) => (
+          <option key={role.id} value={role.id}>{role.name}</option>
+        ))}
+      </select>
+      <div className="mt-3 max-h-[420px] space-y-2 overflow-auto pr-1">
+        {permissions.map((permission) => (
+          <label
+            key={permission.id}
+            className="flex items-center gap-2 rounded border border-warm bg-paper px-2 py-1.5 text-xs"
+          >
+            <input
+              type="checkbox"
+              checked={selectedPermissionIds.has(permission.id)}
+              onChange={() => togglePermission(permission.id)}
+            />
+            <span className="font-mono">{permission.name}</span>
+          </label>
+        ))}
+      </div>
+      {error ? <p className="mt-2 text-xs text-error">{error}</p> : null}
+      <Button
+        onClick={() => void savePermissions()}
+        busy={saving}
+        disabled={!selectedRole}
+        className="mt-3"
+      >
+        Save
+      </Button>
     </div>
   );
 }

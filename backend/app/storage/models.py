@@ -234,7 +234,9 @@ class DeviceConfigChangeRequest(TimestampMixin, Base):
     change_summary: Mapped[str] = mapped_column(Text, nullable=False)
     change_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending_approval", index=True)
+    status: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="pending_approval", index=True
+    )
 
     submitter_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     approver_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)

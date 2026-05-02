@@ -55,7 +55,9 @@ class NcclientNetconfClient:
         except Exception as exc:
             raise _map_exception(exc, params) from exc
 
-    def edit_config(self, params: NetconfConnectionParams, datastore: str, config_body: str) -> None:
+    def edit_config(
+        self, params: NetconfConnectionParams, datastore: str, config_body: str
+    ) -> None:
         try:
             with self._connect(params) as session:
                 session.edit_config(target=datastore, config=config_body)

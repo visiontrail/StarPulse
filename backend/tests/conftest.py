@@ -41,7 +41,9 @@ def client(db_session: Session) -> Iterator[TestClient]:
         yield test_client
 
 
-def _make_user(session: Session, username: str, role_name: str, password: str = "Password1!") -> models.User:
+def _make_user(
+    session: Session, username: str, role_name: str, password: str = "Password1!"
+) -> models.User:
     repo = UserRepository(session)
     role = RoleRepository(session).get_by_name(role_name)
     assert role is not None, f"role '{role_name}' not seeded"
@@ -93,4 +95,3 @@ def authed_client(client: TestClient, db_session: Session) -> TestClient:
     token = get_token(client, "authed_admin")
     client.headers.update(auth_headers(token))
     return client
-

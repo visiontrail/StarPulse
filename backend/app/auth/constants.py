@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # Permission constants
 PERM_DEVICE_READ = "device:read"
+PERM_DEVICE_MANAGE = "device:manage"
 PERM_DEVICE_COLLECT = "device:collect"
 PERM_DEVICE_CHANGE_SUBMIT = "device:change:submit"
 PERM_DEVICE_CHANGE_APPROVE = "device:change:approve"
@@ -19,6 +20,7 @@ PERM_SYSTEM_CONFIG = "system:config"
 
 ALL_PERMISSIONS = [
     PERM_DEVICE_READ,
+    PERM_DEVICE_MANAGE,
     PERM_DEVICE_COLLECT,
     PERM_DEVICE_CHANGE_SUBMIT,
     PERM_DEVICE_CHANGE_APPROVE,
@@ -60,6 +62,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ],
     "admin": [
         PERM_DEVICE_READ,
+        PERM_DEVICE_MANAGE,
         PERM_DEVICE_COLLECT,
         PERM_DEVICE_CHANGE_SUBMIT,
         PERM_DEVICE_CHANGE_APPROVE,

@@ -13,7 +13,7 @@ from app.devices.repository import DeviceRepository
 from app.netconf.client import NetconfConnectionParams
 from app.netconf.services import NetconfService
 from app.storage.database import SessionLocal
-from app.storage.models import TaskStatus
+from app.storage.models import DeviceConfigChangeRequest, TaskStatus
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,9 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
             elif action == "config_snapshot":
                 result = service.read_config(params, _task_datastore(task))
             elif action == "config_change":
-                result = service.write_config(params, _task_datastore(task), _task_config_body(task))
+                result = service.write_config(
+                    params, _task_datastore(task), _task_config_body(task)
+                )
             else:
                 result = service.discover_capabilities(params)
 
@@ -82,7 +84,12 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
                 )
                 repository.update_device_status(task.device_id or 0, DeviceStatus.OFFLINE)
                 if action == "config_change":
-                    _record_change_exec_failure(session, task, result.error_message or "NETCONF write failed")
+                    _record_change_exec_failure(
+                        session, task, result.error_message or "NETCONF write failed"
+                    )
+                    _mark_change_request_finished(
+                        session, task, status="failed", executed_at=datetime.now(UTC)
+                    )
                 session.commit()
                 return _task_response(task)
 
@@ -111,6 +118,9 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
             elif action == "config_change":
                 result_summary = result.summary
                 _record_change_exec_success(session, task)
+                _mark_change_request_finished(
+                    session, task, status="executed", executed_at=datetime.now(UTC)
+                )
             else:
                 result_summary = result.summary
 
@@ -137,6 +147,11 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
                 context={"device_id": task.device_id},
                 started_at=started_at,
             )
+            if action == "config_change":
+                _record_change_exec_failure(session, task, "Device credential is unavailable")
+                _mark_change_request_finished(
+                    session, task, status="failed", executed_at=datetime.now(UTC)
+                )
             session.commit()
             return _task_response(task)
         except Exception as exc:
@@ -151,6 +166,11 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
                 context={"device_id": task.device_id, "exception_type": exc.__class__.__name__},
                 started_at=started_at,
             )
+            if action == "config_change":
+                _record_change_exec_failure(session, task, "Device task failed")
+                _mark_change_request_finished(
+                    session, task, status="failed", executed_at=datetime.now(UTC)
+                )
             session.commit()
             return _task_response(task)
 
@@ -256,6 +276,24 @@ def _record_change_exec_failure(session, task: TaskStatus, error_message: str) -
         target_id=str(task.change_request_id) if task.change_request_id else None,
         metadata={"task_id": task.task_id, "device_id": task.device_id, "error": error_message},
     )
+
+
+def _mark_change_request_finished(
+    session,
+    task: TaskStatus,
+    *,
+    status: str,
+    executed_at: datetime,
+) -> None:
+    if task.change_request_id is None:
+        return
+    change_request = session.get(DeviceConfigChangeRequest, task.change_request_id)
+    if change_request is None:
+        return
+    change_request.status = status
+    change_request.executor_id = task.actor_user_id
+    change_request.executed_at = executed_at
+    session.add(change_request)
 
 
 def _log_task(

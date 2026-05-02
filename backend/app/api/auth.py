@@ -68,12 +68,21 @@ def _clear_refresh_cookie(response: Response) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest, request: Request, response: Response, session: SessionDep) -> LoginResponse:
+def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    session: SessionDep,
+) -> LoginResponse:
     user = UserRepository(session).get_by_username(payload.username)
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
 
-    if user is None or not verify_password(payload.password, user.password_hash) or not user.is_active:
+    if (
+        user is None
+        or not verify_password(payload.password, user.password_hash)
+        or not user.is_active
+    ):
         write_audit_event(
             session=session,
             action=AuditAction.LOGIN_FAILURE,
@@ -122,7 +131,9 @@ def refresh_token(
 
     if not refresh_token:
         _record_refresh_failure(session, ip, ua)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token"
+        )
 
     try:
         old_token, new_raw = validate_and_rotate_refresh_token(session, refresh_token)

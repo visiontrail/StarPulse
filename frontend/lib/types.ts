@@ -104,6 +104,7 @@ export type ChangeRequestListResponse = {
 
 export const PERM = {
   DEVICE_READ: "device:read",
+  DEVICE_MANAGE: "device:manage",
   DEVICE_COLLECT: "device:collect",
   DEVICE_CHANGE_SUBMIT: "device:change:submit",
   DEVICE_CHANGE_APPROVE: "device:change:approve",

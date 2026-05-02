@@ -165,6 +165,11 @@ export const api = {
     }),
   removeRole: (userId: number, roleId: number) =>
     request<UserRead>(`/admin/users/${userId}/roles/${roleId}`, { method: "DELETE" }),
+  updateRolePermissions: (roleId: number, permissionIds: number[]) =>
+    request<Role>(`/admin/roles/${roleId}/permissions`, {
+      method: "PUT",
+      body: JSON.stringify({ permission_ids: permissionIds })
+    }),
 
   // Change requests
   submitChangeRequest: (payload: {
