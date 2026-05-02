@@ -2,6 +2,8 @@
 
 import {
   AlertTriangle,
+  CheckCircle,
+  ClipboardList,
   Database,
   FileClock,
   Gauge,
@@ -10,20 +12,119 @@ import {
   ListRestart,
   RefreshCw,
   Router,
+  Send,
   ShieldCheck,
   Sparkles,
-  TerminalSquare
+  TerminalSquare,
+  Users,
+  XCircle
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api } from "@/lib/api";
-import type { ConfigSnapshot, Device, DeviceProfile, SnapshotListResponse, TaskRead } from "@/lib/types";
+import { LoginView, SessionHeader } from "@/components/auth";
 import { Button, DatastoreSelect, EmptyState, FieldLabel, StatusBadge } from "@/components/ui";
+import { api } from "@/lib/api";
+import { useSession } from "@/lib/session";
+import type {
+  AuditLogRead,
+  ChangeRequestRead,
+  ConfigSnapshot,
+  Device,
+  DeviceProfile,
+  SnapshotListResponse,
+  TaskRead,
+  UserRead
+} from "@/lib/types";
+import { PERM } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
+type Tab = "devices" | "changes" | "admin" | "audit";
 
 export default function OperationsConsole() {
+  const { state } = useSession();
+
+  if (state === "loading") {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted">
+        Loading…
+      </div>
+    );
+  }
+
+  if (state === "unauthenticated") {
+    return <LoginView />;
+  }
+
+  return <AuthenticatedConsole />;
+}
+
+function AuthenticatedConsole() {
+  const { hasPermission } = useSession();
+  const [tab, setTab] = useState<Tab>("devices");
+
+  const tabs: { id: Tab; label: string; icon: React.ReactNode; perm: string }[] = [
+    { id: "devices", label: "Devices", icon: <Router className="h-4 w-4" />, perm: PERM.DEVICE_READ },
+    {
+      id: "changes",
+      label: "Changes",
+      icon: <ClipboardList className="h-4 w-4" />,
+      perm: PERM.DEVICE_CHANGE_SUBMIT
+    },
+    { id: "admin", label: "Admin", icon: <Users className="h-4 w-4" />, perm: PERM.USER_MANAGE },
+    {
+      id: "audit",
+      label: "Audit",
+      icon: <FileClock className="h-4 w-4" />,
+      perm: PERM.AUDIT_READ_SUMMARY
+    }
+  ];
+
+  return (
+    <main className="min-h-screen text-ink">
+      {/* App bar */}
+      <div className="flex h-14 items-center justify-between border-b border-warm bg-canvas/95 px-4">
+        <div className="flex items-center gap-4">
+          <div>
+            <p className="font-mono text-[11px] uppercase text-muted">Star Pulse</p>
+          </div>
+          <nav className="flex gap-1">
+            {tabs.map(({ id, label, icon, perm }) =>
+              hasPermission(perm) ? (
+                <button
+                  key={id}
+                  onClick={() => setTab(id)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded px-3 py-1.5 text-sm transition",
+                    tab === id
+                      ? "bg-paper font-semibold text-ink"
+                      : "text-muted hover:text-ink"
+                  )}
+                >
+                  {icon}
+                  {label}
+                </button>
+              ) : null
+            )}
+          </nav>
+        </div>
+        <SessionHeader />
+      </div>
+
+      <div className="p-4 md:p-6">
+        {tab === "devices" && hasPermission(PERM.DEVICE_READ) && <DevicesTab />}
+        {tab === "changes" && hasPermission(PERM.DEVICE_CHANGE_SUBMIT) && <ChangesTab />}
+        {tab === "admin" && hasPermission(PERM.USER_MANAGE) && <AdminTab />}
+        {tab === "audit" && hasPermission(PERM.AUDIT_READ_SUMMARY) && <AuditTab />}
+      </div>
+    </main>
+  );
+}
+
+// ── Devices Tab ────────────────────────────────────────────────────────────
+
+function DevicesTab() {
+  const { hasPermission } = useSession();
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | null>(null);
   const [profile, setProfile] = useState<DeviceProfile | null>(null);
@@ -36,7 +137,7 @@ export default function OperationsConsole() {
   const [error, setError] = useState<string | null>(null);
 
   const selectedDevice = useMemo(
-    () => devices.find((device) => device.id === selectedDeviceId) ?? null,
+    () => devices.find((d) => d.id === selectedDeviceId) ?? null,
     [devices, selectedDeviceId]
   );
 
@@ -46,11 +147,11 @@ export default function OperationsConsole() {
     try {
       const items = await api.listDevices();
       setDevices(items);
-      setSelectedDeviceId((current) => current ?? items[0]?.id ?? null);
+      setSelectedDeviceId((cur) => cur ?? items[0]?.id ?? null);
       setDevicesState("loaded");
-    } catch (caught) {
+    } catch (e) {
       setDevicesState("error");
-      setError(errorMessage(caught));
+      setError(errorMessage(e));
     }
   }, []);
 
@@ -58,14 +159,16 @@ export default function OperationsConsole() {
     setProfileState("loading");
     setError(null);
     try {
-      const [profileResult, snapshotResult]: [DeviceProfile, SnapshotListResponse] =
-        await Promise.all([api.getProfile(deviceId), api.listSnapshots(deviceId, 20)]);
-      setProfile(profileResult);
-      setSnapshots(snapshotResult.items);
+      const [prof, snap]: [DeviceProfile, SnapshotListResponse] = await Promise.all([
+        api.getProfile(deviceId),
+        api.listSnapshots(deviceId, 20)
+      ]);
+      setProfile(prof);
+      setSnapshots(snap.items);
       setProfileState("loaded");
-    } catch (caught) {
+    } catch (e) {
       setProfileState("error");
-      setError(errorMessage(caught));
+      setError(errorMessage(e));
     }
   }, []);
 
@@ -74,24 +177,18 @@ export default function OperationsConsole() {
   }, [loadDevices]);
 
   useEffect(() => {
-    if (selectedDeviceId !== null) {
-      void loadProfile(selectedDeviceId);
-    } else {
-      setProfile(null);
-      setSnapshots([]);
-    }
+    if (selectedDeviceId !== null) void loadProfile(selectedDeviceId);
+    else { setProfile(null); setSnapshots([]); }
   }, [loadProfile, selectedDeviceId]);
 
   const configTaskRunning = profile?.recent_tasks.some(
-    (task) =>
-      task.task_type === "device.config_snapshot" &&
-      (task.status === "queued" || task.status === "running")
+    (t) => t.task_type === "device.config_snapshot" && (t.status === "queued" || t.status === "running")
   );
 
+  const canCollect = hasPermission(PERM.DEVICE_COLLECT);
+
   async function submitSnapshot() {
-    if (selectedDeviceId === null || configTaskRunning) {
-      return;
-    }
+    if (!selectedDeviceId || configTaskRunning || !canCollect) return;
     setSubmitState("loading");
     setError(null);
     try {
@@ -99,139 +196,436 @@ export default function OperationsConsole() {
       setLastTask(task);
       await loadProfile(selectedDeviceId);
       setSubmitState("loaded");
-    } catch (caught) {
+    } catch (e) {
       setSubmitState("error");
-      setError(errorMessage(caught));
+      setError(errorMessage(e));
     }
   }
 
   return (
-    <main className="min-h-screen p-4 text-ink md:p-6">
-      <div className="mx-auto grid max-w-[1440px] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="rounded border border-warm bg-canvas/95">
-          <div className="flex h-16 items-center justify-between border-b border-warm px-4">
-            <div>
-              <p className="font-mono text-[11px] uppercase text-muted">Star Pulse</p>
-              <h1 className="text-xl font-semibold">Operations</h1>
-            </div>
-            <Button
-              aria-label="Refresh devices"
-              title="Refresh devices"
-              onClick={() => void loadDevices()}
-              busy={devicesState === "loading"}
-              className="h-9 w-9 px-0"
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            </Button>
-          </div>
-
-          <div className="p-3">
-            {devicesState === "loading" ? <DeviceListSkeleton /> : null}
-            {devicesState === "loaded" && devices.length === 0 ? (
-              <EmptyState icon={<Router className="h-6 w-6" />} title="No devices registered" />
-            ) : null}
-            {devicesState === "error" ? (
-              <ErrorPanel message={error} onRetry={() => void loadDevices()} />
-            ) : null}
-            {devices.length > 0 ? (
-              <div className="space-y-2">
-                {devices.map((device) => (
-                  <DeviceListItem
-                    key={device.id}
-                    device={device}
-                    active={device.id === selectedDeviceId}
-                    onSelect={() => setSelectedDeviceId(device.id)}
-                  />
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </aside>
-
-        <section className="min-w-0 rounded border border-warm bg-canvas/95">
-          {selectedDevice === null && devicesState !== "loading" ? (
-            <div className="p-4">
-              <EmptyState icon={<HardDrive className="h-6 w-6" />} title="Select a device" />
+    <div className="mx-auto grid max-w-[1440px] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <aside className="rounded border border-warm bg-canvas/95">
+        <div className="flex h-16 items-center justify-between border-b border-warm px-4">
+          <h2 className="text-xl font-semibold">Operations</h2>
+          <Button
+            aria-label="Refresh devices"
+            onClick={() => void loadDevices()}
+            busy={devicesState === "loading"}
+            className="h-9 w-9 px-0"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden />
+          </Button>
+        </div>
+        <div className="p-3">
+          {devicesState === "loading" ? <DeviceListSkeleton /> : null}
+          {devicesState === "loaded" && devices.length === 0 ? (
+            <EmptyState icon={<Router className="h-6 w-6" />} title="No devices registered" />
+          ) : null}
+          {devicesState === "error" ? (
+            <ErrorPanel message={error} onRetry={() => void loadDevices()} />
+          ) : null}
+          {devices.length > 0 ? (
+            <div className="space-y-2">
+              {devices.map((d) => (
+                <DeviceListItem
+                  key={d.id}
+                  device={d}
+                  active={d.id === selectedDeviceId}
+                  onSelect={() => setSelectedDeviceId(d.id)}
+                />
+              ))}
             </div>
           ) : null}
+        </div>
+      </aside>
 
-          {selectedDevice !== null ? (
-            <>
-              <header className="flex flex-col gap-4 border-b border-warm px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
-                <div className="min-w-0">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <StatusBadge status={profile?.status ?? selectedDevice.status} />
-                    <span className="font-mono text-[11px] text-muted">
-                      {selectedDevice.group ?? "ungrouped"}
-                    </span>
-                  </div>
-                  <h2 className="truncate text-2xl font-semibold">{selectedDevice.name}</h2>
-                  <p className="mt-1 font-mono text-xs text-muted">
-                    {selectedDevice.connection
-                      ? `${selectedDevice.connection.protocol}://${selectedDevice.connection.host}:${selectedDevice.connection.port}`
-                      : "connection unavailable"}
-                  </p>
-                </div>
+      <section className="min-w-0 rounded border border-warm bg-canvas/95">
+        {selectedDevice === null && devicesState !== "loading" ? (
+          <div className="p-4">
+            <EmptyState icon={<HardDrive className="h-6 w-6" />} title="Select a device" />
+          </div>
+        ) : null}
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <DatastoreSelect value={datastore} onValueChange={setDatastore} />
-                  <Button
-                    onClick={() => void submitSnapshot()}
-                    disabled={submitState === "loading" || configTaskRunning}
-                    busy={submitState === "loading"}
-                  >
-                    <Database className="h-4 w-4" aria-hidden="true" />
-                    Collect
-                  </Button>
-                  <Button
-                    aria-label="Refresh profile"
-                    title="Refresh profile"
-                    onClick={() => void loadProfile(selectedDevice.id)}
-                    busy={profileState === "loading"}
-                    className="h-9 w-9 px-0"
-                  >
-                    <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                  </Button>
+        {selectedDevice !== null ? (
+          <>
+            <header className="flex flex-col gap-4 border-b border-warm px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <StatusBadge status={profile?.status ?? selectedDevice.status} />
+                  <span className="font-mono text-[11px] text-muted">
+                    {selectedDevice.group ?? "ungrouped"}
+                  </span>
                 </div>
-              </header>
-
-              {error ? (
-                <div className="px-4 pt-4">
-                  <ErrorPanel message={error} onRetry={() => void loadProfile(selectedDevice.id)} />
-                </div>
-              ) : null}
-
-              <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-                <div className="space-y-4">
-                  <ProfileGrid profile={profile} loading={profileState === "loading"} />
-                  <SnapshotTable snapshots={snapshots} />
-                </div>
-                <div className="space-y-4">
-                  <ReadOnlyPanel
-                    profile={profile}
-                    lastTask={lastTask}
-                    configTaskRunning={Boolean(configTaskRunning)}
-                  />
-                  <RecentTasks tasks={profile?.recent_tasks ?? []} />
-                </div>
+                <h2 className="truncate text-2xl font-semibold">{selectedDevice.name}</h2>
+                <p className="mt-1 font-mono text-xs text-muted">
+                  {selectedDevice.connection
+                    ? `${selectedDevice.connection.protocol}://${selectedDevice.connection.host}:${selectedDevice.connection.port}`
+                    : "connection unavailable"}
+                </p>
               </div>
-            </>
-          ) : null}
-        </section>
-      </div>
-    </main>
+              <div className="flex flex-wrap items-center gap-2">
+                <DatastoreSelect value={datastore} onValueChange={setDatastore} />
+                <Button
+                  onClick={() => void submitSnapshot()}
+                  disabled={!canCollect || submitState === "loading" || Boolean(configTaskRunning)}
+                  busy={submitState === "loading"}
+                  title={!canCollect ? "Requires device:collect permission" : undefined}
+                >
+                  <Database className="h-4 w-4" aria-hidden />
+                  Collect
+                </Button>
+                <Button
+                  aria-label="Refresh profile"
+                  onClick={() => void loadProfile(selectedDevice.id)}
+                  busy={profileState === "loading"}
+                  className="h-9 w-9 px-0"
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden />
+                </Button>
+              </div>
+            </header>
+
+            {error ? (
+              <div className="px-4 pt-4">
+                <ErrorPanel message={error} onRetry={() => void loadProfile(selectedDevice.id)} />
+              </div>
+            ) : null}
+
+            <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div className="space-y-4">
+                <ProfileGrid profile={profile} loading={profileState === "loading"} />
+                <SnapshotTable snapshots={snapshots} />
+              </div>
+              <div className="space-y-4">
+                <ReadOnlyPanel
+                  profile={profile}
+                  lastTask={lastTask}
+                  configTaskRunning={Boolean(configTaskRunning)}
+                />
+                <RecentTasks tasks={profile?.recent_tasks ?? []} />
+              </div>
+            </div>
+          </>
+        ) : null}
+      </section>
+    </div>
   );
 }
 
+// ── Changes Tab ────────────────────────────────────────────────────────────
+
+function ChangesTab() {
+  const { hasPermission } = useSession();
+  const [changes, setChanges] = useState<ChangeRequestRead[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canApprove = hasPermission(PERM.DEVICE_CHANGE_APPROVE);
+  const canExecute = hasPermission(PERM.DEVICE_CHANGE_EXECUTE);
+
+  const loadChanges = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await api.listChangeRequests();
+      setChanges(resp.items);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadChanges();
+  }, [loadChanges]);
+
+  async function handleApprove(id: number) {
+    try {
+      await api.approveChangeRequest(id);
+      await loadChanges();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
+  async function handleReject(id: number) {
+    const note = window.prompt("Rejection reason:");
+    if (!note) return;
+    try {
+      await api.rejectChangeRequest(id, note);
+      await loadChanges();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Change Requests</h2>
+        <Button onClick={() => void loadChanges()} busy={loading} className="h-9 w-9 px-0">
+          <RefreshCw className="h-4 w-4" aria-hidden />
+        </Button>
+      </div>
+
+      {error ? <ErrorPanel message={error} onRetry={() => void loadChanges()} /> : null}
+
+      {canExecute && <DirectExecuteForm onSuccess={() => void loadChanges()} />}
+
+      {changes.length === 0 && !loading ? (
+        <EmptyState icon={<ClipboardList className="h-6 w-6" />} title="No change requests" />
+      ) : null}
+
+      <div className="space-y-3">
+        {changes.map((cr) => (
+          <div key={cr.id} className="rounded border border-warm bg-canvas/95 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge status={cr.status} />
+                  {cr.direct_execute && (
+                    <span className="rounded bg-warning/20 px-2 py-0.5 font-mono text-[11px] text-warning">
+                      direct-execute
+                    </span>
+                  )}
+                  <span className="font-mono text-xs text-muted">#{cr.id}</span>
+                </div>
+                <p className="mt-1 text-sm font-semibold">{cr.change_summary}</p>
+                <p className="mt-0.5 text-xs text-muted">
+                  Device {cr.device_id} · {cr.datastore} · by{" "}
+                  {cr.submitter?.display_name ?? "unknown"}
+                </p>
+                <p className="mt-0.5 text-xs text-muted">Reason: {cr.reason}</p>
+              </div>
+              {cr.status === "pending_approval" && canApprove && (
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => void handleApprove(cr.id)}
+                    className="h-8 px-2 text-xs"
+                  >
+                    <CheckCircle className="h-3.5 w-3.5" /> Approve
+                  </Button>
+                  <Button
+                    onClick={() => void handleReject(cr.id)}
+                    className="h-8 px-2 text-xs bg-paper text-error"
+                  >
+                    <XCircle className="h-3.5 w-3.5" /> Reject
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [deviceId, setDeviceId] = useState("");
+  const [datastore, setDatastore] = useState("running");
+  const [summary, setSummary] = useState("");
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reason.trim()) { setError("Reason is required for direct execution"); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      await api.directExecute({
+        device_id: Number(deviceId),
+        datastore,
+        change_summary: summary,
+        reason
+      });
+      setOpen(false);
+      setSummary(""); setReason(""); setDeviceId("");
+      onSuccess();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <Button onClick={() => setOpen(true)} className="text-sm">
+        <Send className="h-4 w-4" /> Direct Execute
+      </Button>
+    );
+  }
+
+  return (
+    <div className="rounded border border-warm bg-canvas/95 p-4">
+      <h3 className="mb-3 font-semibold text-sm">Direct Execute (bypasses approval)</h3>
+      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <FieldLabel>Device ID</FieldLabel>
+            <input
+              type="number"
+              required
+              value={deviceId}
+              onChange={(e) => setDeviceId(e.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <FieldLabel>Datastore</FieldLabel>
+            <DatastoreSelect value={datastore} onValueChange={setDatastore} />
+          </div>
+        </div>
+        <div>
+          <FieldLabel>Change summary</FieldLabel>
+          <input
+            type="text"
+            required
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <FieldLabel>Reason (required)</FieldLabel>
+          <textarea
+            required
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+          />
+        </div>
+        {error ? <p className="text-xs text-error">{error}</p> : null}
+        <div className="flex gap-2">
+          <Button type="submit" busy={loading}>Execute</Button>
+          <Button type="button" onClick={() => setOpen(false)} className="bg-paper">Cancel</Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ── Admin Tab ──────────────────────────────────────────────────────────────
+
+function AdminTab() {
+  const [users, setUsers] = useState<UserRead[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      setUsers(await api.listUsers());
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadUsers(); }, [loadUsers]);
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">User Management</h2>
+        <Button onClick={() => void loadUsers()} busy={loading} className="h-9 w-9 px-0">
+          <RefreshCw className="h-4 w-4" aria-hidden />
+        </Button>
+      </div>
+      {error ? <ErrorPanel message={error} onRetry={() => void loadUsers()} /> : null}
+      <div className="space-y-2">
+        {users.map((u) => (
+          <div key={u.id} className="flex items-center justify-between rounded border border-warm bg-canvas/95 p-3">
+            <div>
+              <p className="text-sm font-semibold">{u.display_name}</p>
+              <p className="text-xs text-muted">
+                {u.username} · {u.roles.map((r) => r.name).join(", ") || "no roles"}
+              </p>
+            </div>
+            <StatusBadge status={u.is_active ? "online" : "offline"} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Audit Tab ──────────────────────────────────────────────────────────────
+
+function AuditTab() {
+  const [logs, setLogs] = useState<AuditLogRead[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadLogs = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await api.listAuditLogs({ limit: 50 });
+      setLogs(resp.items);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadLogs(); }, [loadLogs]);
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Audit Log</h2>
+        <Button onClick={() => void loadLogs()} busy={loading} className="h-9 w-9 px-0">
+          <RefreshCw className="h-4 w-4" aria-hidden />
+        </Button>
+      </div>
+      {error ? <ErrorPanel message={error} onRetry={() => void loadLogs()} /> : null}
+      {logs.length === 0 && !loading ? (
+        <EmptyState icon={<FileClock className="h-6 w-6" />} title="No audit events" />
+      ) : null}
+      <div className="overflow-x-auto rounded border border-warm">
+        <table className="w-full min-w-[600px] border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-warm text-left font-mono text-[11px] uppercase text-muted">
+              <th className="px-3 py-2 font-medium">Time</th>
+              <th className="px-3 py-2 font-medium">Action</th>
+              <th className="px-3 py-2 font-medium">Actor</th>
+              <th className="px-3 py-2 font-medium">Target</th>
+              <th className="px-3 py-2 font-medium">Outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.map((log) => (
+              <tr key={log.id} className="border-b border-warm/70 last:border-0">
+                <td className="px-3 py-2 text-xs text-muted">{formatDate(log.created_at)}</td>
+                <td className="px-3 py-2 font-mono text-xs">{log.action}</td>
+                <td className="px-3 py-2 text-xs">{log.actor_user_id ?? "-"}</td>
+                <td className="px-3 py-2 text-xs text-muted">{log.target_type ?? "-"}</td>
+                <td className="px-3 py-2">
+                  <StatusBadge status={log.outcome} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared sub-components ──────────────────────────────────────────────────
+
 function DeviceListItem({
-  device,
-  active,
-  onSelect
-}: {
-  device: Device;
-  active: boolean;
-  onSelect: () => void;
-}) {
+  device, active, onSelect
+}: { device: Device; active: boolean; onSelect: () => void }) {
   return (
     <button
       onClick={onSelect}
@@ -260,12 +654,8 @@ function DeviceListItem({
 }
 
 function ProfileGrid({ profile, loading }: { profile: DeviceProfile | null; loading: boolean }) {
-  if (loading && profile === null) {
-    return <PanelSkeleton />;
-  }
-  if (profile === null) {
-    return <EmptyState icon={<Gauge className="h-6 w-6" />} title="Profile unavailable" />;
-  }
+  if (loading && profile === null) return <PanelSkeleton />;
+  if (profile === null) return <EmptyState icon={<Gauge className="h-6 w-6" />} title="Profile unavailable" />;
   const connection = profile.connection;
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -307,12 +697,12 @@ function SnapshotTable({ snapshots }: { snapshots: ConfigSnapshot[] }) {
               </tr>
             </thead>
             <tbody>
-              {snapshots.map((snapshot) => (
-                <tr key={snapshot.id} className="border-b border-warm/70 last:border-0">
-                  <td className="py-3 pr-3 font-mono text-xs">{snapshot.datastore}</td>
-                  <td className="py-3 pr-3 text-muted">{formatDate(snapshot.collected_at)}</td>
-                  <td className="py-3 pr-3 font-mono text-xs">{digestShort(snapshot.content_digest)}</td>
-                  <td className="py-3 text-muted">{diffLabel(snapshot.diff_summary)}</td>
+              {snapshots.map((s) => (
+                <tr key={s.id} className="border-b border-warm/70 last:border-0">
+                  <td className="py-3 pr-3 font-mono text-xs">{s.datastore}</td>
+                  <td className="py-3 pr-3 text-muted">{formatDate(s.collected_at)}</td>
+                  <td className="py-3 pr-3 font-mono text-xs">{digestShort(s.content_digest)}</td>
+                  <td className="py-3 text-muted">{diffLabel(s.diff_summary)}</td>
                 </tr>
               ))}
             </tbody>
@@ -324,14 +714,8 @@ function SnapshotTable({ snapshots }: { snapshots: ConfigSnapshot[] }) {
 }
 
 function ReadOnlyPanel({
-  profile,
-  lastTask,
-  configTaskRunning
-}: {
-  profile: DeviceProfile | null;
-  lastTask: TaskRead | null;
-  configTaskRunning: boolean;
-}) {
+  profile, lastTask, configTaskRunning
+}: { profile: DeviceProfile | null; lastTask: TaskRead | null; configTaskRunning: boolean }) {
   return (
     <InfoPanel icon={<ShieldCheck />} title="Boundary">
       <div className="space-y-3">
@@ -375,9 +759,7 @@ function RecentTasks({ tasks }: { tasks: DeviceProfile["recent_tasks"] }) {
                 <StatusBadge status={task.status} />
               </div>
               {task.status === "failed" ? (
-                <p className="mt-2 text-xs text-error">
-                  {task.error_code}: {task.error_message}
-                </p>
+                <p className="mt-2 text-xs text-error">{task.error_code}: {task.error_message}</p>
               ) : null}
             </div>
           ))}
@@ -387,14 +769,8 @@ function RecentTasks({ tasks }: { tasks: DeviceProfile["recent_tasks"] }) {
   );
 }
 
-function InfoPanel({
-  icon,
-  title,
-  children
-}: {
-  icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
+function InfoPanel({ icon, title, children }: {
+  icon: React.ReactNode; title: string; children: React.ReactNode
 }) {
   return (
     <section className="rounded border border-warm bg-surface/70 p-4">
@@ -417,9 +793,7 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function CodeList({ items, empty }: { items: string[]; empty: string }) {
-  if (items.length === 0) {
-    return <p className="text-sm text-muted">{empty}</p>;
-  }
+  if (items.length === 0) return <p className="text-sm text-muted">{empty}</p>;
   return (
     <div className="flex flex-wrap gap-2">
       {items.map((item) => (
@@ -438,8 +812,8 @@ function CodeList({ items, empty }: { items: string[]; empty: string }) {
 function DeviceListSkeleton() {
   return (
     <div className="space-y-2">
-      {[0, 1, 2].map((item) => (
-        <div key={item} className="h-24 animate-pulse rounded border border-warm bg-paper" />
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="h-24 animate-pulse rounded border border-warm bg-paper" />
       ))}
     </div>
   );
@@ -448,8 +822,8 @@ function DeviceListSkeleton() {
 function PanelSkeleton() {
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      {[0, 1].map((item) => (
-        <div key={item} className="h-44 animate-pulse rounded border border-warm bg-surface" />
+      {[0, 1].map((i) => (
+        <div key={i} className="h-44 animate-pulse rounded border border-warm bg-surface" />
       ))}
     </div>
   );
@@ -460,47 +834,34 @@ function ErrorPanel({ message, onRetry }: { message: string | null; onRetry: () 
     <div className="rounded border border-error/25 bg-error/10 p-4 text-error">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 gap-2">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           <p className="break-words text-sm">{message ?? "Request failed"}</p>
         </div>
-        <Button onClick={onRetry} className="h-8 bg-paper text-error">
-          Retry
-        </Button>
+        <Button onClick={onRetry} className="h-8 bg-paper text-error">Retry</Button>
       </div>
     </div>
   );
 }
 
 function summaryValue(summary: Record<string, unknown> | undefined) {
-  if (!summary) {
-    return "-";
-  }
-  if (typeof summary.capability_count === "number") {
-    return `${summary.capability_count} caps`;
-  }
+  if (!summary) return "-";
+  if (typeof summary.capability_count === "number") return `${summary.capability_count} caps`;
   return "ready";
 }
 
 function digestShort(digest: string | undefined) {
-  if (!digest) {
-    return "-";
-  }
+  if (!digest) return "-";
   return digest.replace("sha256:", "").slice(0, 12);
 }
 
 function diffLabel(diff: Record<string, unknown>) {
-  if (diff.previous_snapshot_id === null) {
-    return "first snapshot";
-  }
+  if (diff.previous_snapshot_id === null) return "first snapshot";
   return diff.changed ? "changed" : "unchanged";
 }
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
+    month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit"
   }).format(new Date(value));
 }
 

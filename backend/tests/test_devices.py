@@ -12,8 +12,8 @@ from app.devices.service import DeviceService
 from app.storage.models import Device, DeviceConfigSnapshot, DeviceConnectionConfig, TaskStatus
 
 
-def test_create_and_fetch_device(client: TestClient) -> None:
-    response = client.post(
+def test_create_and_fetch_device(authed_client: TestClient) -> None:
+    response = authed_client.post(
         "/api/v1/devices",
         json={
             "name": "sat-router-001",
@@ -35,12 +35,12 @@ def test_create_and_fetch_device(client: TestClient) -> None:
     assert body["connection"]["has_credential"] is True
     assert "password" not in body["connection"]
 
-    list_response = client.get("/api/v1/devices")
+    list_response = authed_client.get("/api/v1/devices")
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
     assert "secret" not in str(list_response.json()).lower()
 
-    detail_response = client.get(f"/api/v1/devices/{body['id']}")
+    detail_response = authed_client.get(f"/api/v1/devices/{body['id']}")
     assert detail_response.status_code == 200
     assert detail_response.json()["serial_number"] == "SR-001"
 
@@ -165,7 +165,7 @@ def test_device_repository_persists_and_queries_config_snapshots(db_session: Ses
 
 
 def test_config_snapshot_list_and_profile_api_are_safe(
-    client: TestClient, db_session: Session
+    authed_client: TestClient, db_session: Session
 ) -> None:
     device = DeviceService(db_session).create_device(
         DeviceCreate(
@@ -208,9 +208,9 @@ def test_config_snapshot_list_and_profile_api_are_safe(
     )
     db_session.commit()
 
-    snapshots_response = client.get(f"/api/v1/devices/{device.id}/config-snapshots?limit=5")
-    profile_response = client.get(f"/api/v1/devices/{device.id}/profile")
-    detail_response = client.get(f"/api/v1/devices/{device.id}")
+    snapshots_response = authed_client.get(f"/api/v1/devices/{device.id}/config-snapshots?limit=5")
+    profile_response = authed_client.get(f"/api/v1/devices/{device.id}/profile")
+    detail_response = authed_client.get(f"/api/v1/devices/{device.id}")
 
     assert snapshots_response.status_code == 200
     assert snapshots_response.json()["items"][0]["content_digest"] == "sha256:profile"
@@ -224,7 +224,23 @@ def test_config_snapshot_list_and_profile_api_are_safe(
     assert "profile-secret" not in str(profile_response.json())
 
 
-def test_config_snapshot_list_rejects_missing_device(client: TestClient) -> None:
-    response = client.get("/api/v1/devices/999/config-snapshots")
+def test_config_snapshot_list_rejects_missing_device(authed_client: TestClient) -> None:
+    response = authed_client.get("/api/v1/devices/999/config-snapshots")
 
     assert response.status_code == 404
+
+
+def test_unauthenticated_cannot_access_snapshots(client: TestClient, db_session: Session) -> None:
+    resp = client.get("/api/v1/devices/1/config-snapshots")
+    assert resp.status_code == 401
+
+
+def test_viewer_cannot_collect_snapshot(client: TestClient, viewer_user) -> None:
+    from tests.conftest import auth_headers, get_token
+    token = get_token(client, "viewer1")
+    resp = client.post(
+        "/api/v1/devices/1/config-snapshots",
+        json={"datastore": "running"},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 403

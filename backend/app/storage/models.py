@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Table, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.devices.constants import DeviceStatus, DeviceTaskStatus
@@ -93,6 +93,12 @@ class TaskStatus(TimestampMixin, Base):
     device_id: Mapped[int | None] = mapped_column(
         ForeignKey("devices.id"), nullable=True, index=True
     )
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    change_request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("device_config_change_requests.id"), nullable=True, index=True
+    )
     result_summary: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -132,3 +138,139 @@ class DeviceConfigSnapshot(TimestampMixin, Base):
     summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
     device: Mapped[Device] = relationship(back_populates="config_snapshots")
+
+
+# ── Auth / RBAC many-to-many association tables ────────────────────────────
+
+from sqlalchemy import Column  # noqa: E402
+
+user_roles_table = Table(
+    "user_roles",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id"), primary_key=True),
+)
+
+role_permissions_table = Table(
+    "role_permissions",
+    Base.metadata,
+    Column("role_id", Integer, ForeignKey("roles.id"), primary_key=True),
+    Column("permission_id", Integer, ForeignKey("permissions.id"), primary_key=True),
+)
+
+
+class User(TimestampMixin, Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    roles: Mapped[list[Role]] = relationship(
+        secondary=user_roles_table, back_populates="users", lazy="selectin"
+    )
+    refresh_tokens: Mapped[list[RefreshToken]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class Role(TimestampMixin, Base):
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    users: Mapped[list[User]] = relationship(secondary=user_roles_table, back_populates="roles")
+    permissions: Mapped[list[Permission]] = relationship(
+        secondary=role_permissions_table, back_populates="roles", lazy="selectin"
+    )
+
+
+class Permission(Base):
+    __tablename__ = "permissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    roles: Mapped[list[Role]] = relationship(
+        secondary=role_permissions_table, back_populates="permissions"
+    )
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="refresh_tokens")
+
+    @property
+    def is_valid(self) -> bool:
+        from app.common.time import utc_now
+
+        return self.revoked_at is None and self.expires_at > utc_now()
+
+
+class DeviceConfigChangeRequest(TimestampMixin, Base):
+    __tablename__ = "device_config_change_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False, index=True)
+    datastore: Mapped[str] = mapped_column(String(64), nullable=False)
+    change_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    change_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending_approval", index=True)
+
+    submitter_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    approver_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approval_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    direct_execute: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    direct_execute_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    executor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    execution_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    device: Mapped[Device] = relationship()
+    submitter: Mapped[User] = relationship(foreign_keys=[submitter_id])
+    approver: Mapped[User | None] = relationship(foreign_keys=[approver_id])
+    executor: Mapped[User | None] = relationship(foreign_keys=[executor_id])
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    action: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    target_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    target_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    permission: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    actor: Mapped[User | None] = relationship(foreign_keys=[actor_user_id])

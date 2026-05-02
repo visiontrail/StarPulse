@@ -25,7 +25,7 @@ def test_sample_task_can_run_directly() -> None:
     }
 
 
-def test_task_api_records_and_dispatches_task(client: TestClient, monkeypatch) -> None:
+def test_task_api_records_and_dispatches_task(authed_client: TestClient, monkeypatch) -> None:
     dispatched: list[tuple[str, dict[str, object]]] = []
 
     def fake_delay(task_id: str, payload: dict[str, object]) -> None:
@@ -33,7 +33,7 @@ def test_task_api_records_and_dispatches_task(client: TestClient, monkeypatch) -
 
     monkeypatch.setattr("app.tasks.service.sample_health.delay", fake_delay)
 
-    response = client.post(
+    response = authed_client.post(
         "/api/v1/tasks",
         json={"task_type": "sample.health", "payload": {"kind": "health"}},
     )
@@ -43,7 +43,7 @@ def test_task_api_records_and_dispatches_task(client: TestClient, monkeypatch) -
     assert body["status"] == "queued"
     assert dispatched == [(body["task_id"], {"kind": "health"})]
 
-    detail = client.get(f"/api/v1/tasks/{body['task_id']}")
+    detail = authed_client.get(f"/api/v1/tasks/{body['task_id']}")
     assert detail.status_code == 200
     assert detail.json()["metadata"] == {"payload": {"kind": "health"}}
 
@@ -57,7 +57,7 @@ def test_ai_placeholder_is_inert() -> None:
 
 
 def test_device_task_api_dispatches_without_leaking_secret(
-    client: TestClient, monkeypatch
+    authed_client: TestClient, monkeypatch
 ) -> None:
     dispatched: list[str] = []
 
@@ -66,7 +66,7 @@ def test_device_task_api_dispatches_without_leaking_secret(
 
     monkeypatch.setattr("app.tasks.service.run_connection_test.delay", fake_delay)
 
-    device_response = client.post(
+    device_response = authed_client.post(
         "/api/v1/devices",
         json={
             "name": "sat-router-task-api",
@@ -79,7 +79,7 @@ def test_device_task_api_dispatches_without_leaking_secret(
     )
     device_id = device_response.json()["id"]
 
-    response = client.post(f"/api/v1/devices/{device_id}/connection-test")
+    response = authed_client.post(f"/api/v1/devices/{device_id}/connection-test")
 
     assert response.status_code == 202
     body = response.json()
@@ -90,7 +90,7 @@ def test_device_task_api_dispatches_without_leaking_secret(
 
 
 def test_config_snapshot_api_dispatches_task_with_safe_metadata(
-    client: TestClient, monkeypatch
+    authed_client: TestClient, monkeypatch
 ) -> None:
     dispatched: list[str] = []
 
@@ -99,7 +99,7 @@ def test_config_snapshot_api_dispatches_task_with_safe_metadata(
 
     monkeypatch.setattr("app.tasks.service.run_config_snapshot.delay", fake_delay)
 
-    device_response = client.post(
+    device_response = authed_client.post(
         "/api/v1/devices",
         json={
             "name": "sat-router-config-api",
@@ -112,7 +112,7 @@ def test_config_snapshot_api_dispatches_task_with_safe_metadata(
     )
     device_id = device_response.json()["id"]
 
-    response = client.post(
+    response = authed_client.post(
         f"/api/v1/devices/{device_id}/config-snapshots",
         json={"datastore": "running"},
     )
@@ -126,12 +126,12 @@ def test_config_snapshot_api_dispatches_task_with_safe_metadata(
 
 
 def test_config_snapshot_api_rejects_bad_datastore_without_dispatch(
-    client: TestClient, monkeypatch
+    authed_client: TestClient, monkeypatch
 ) -> None:
     dispatched: list[str] = []
     monkeypatch.setattr("app.tasks.service.run_config_snapshot.delay", dispatched.append)
 
-    device_response = client.post(
+    device_response = authed_client.post(
         "/api/v1/devices",
         json={
             "name": "sat-router-bad-datastore",
@@ -144,7 +144,7 @@ def test_config_snapshot_api_rejects_bad_datastore_without_dispatch(
     )
     device_id = device_response.json()["id"]
 
-    response = client.post(
+    response = authed_client.post(
         f"/api/v1/devices/{device_id}/config-snapshots",
         json={"datastore": "intended"},
     )
@@ -154,12 +154,12 @@ def test_config_snapshot_api_rejects_bad_datastore_without_dispatch(
 
 
 def test_device_task_api_rejects_missing_device_without_dispatch(
-    client: TestClient, monkeypatch
+    authed_client: TestClient, monkeypatch
 ) -> None:
     dispatched: list[str] = []
     monkeypatch.setattr("app.tasks.service.run_connection_test.delay", dispatched.append)
 
-    response = client.post("/api/v1/devices/999/connection-test")
+    response = authed_client.post("/api/v1/devices/999/connection-test")
 
     assert response.status_code == 404
     assert dispatched == []

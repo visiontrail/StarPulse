@@ -11,6 +11,7 @@ from app.devices.constants import DeviceTaskStatus, DeviceTaskType
 from app.storage.models import TaskStatus
 from app.tasks.jobs import (
     run_capability_discovery,
+    run_config_change,
     run_config_snapshot,
     run_connection_test,
     sample_health,
@@ -49,13 +50,37 @@ class TaskService:
         self._log_dispatch(task_status)
         return task_status
 
-    def submit_config_snapshot(self, device_id: int, datastore: str) -> TaskStatus:
+    def submit_config_snapshot(
+        self,
+        device_id: int,
+        datastore: str,
+        actor_user_id: int | None = None,
+    ) -> TaskStatus:
         task_status = self._create_device_task(
             DeviceTaskType.CONFIG_SNAPSHOT,
             device_id,
             metadata={"datastore": datastore},
+            actor_user_id=actor_user_id,
         )
         run_config_snapshot.delay(task_status.task_id)
+        self._log_dispatch(task_status)
+        return task_status
+
+    def submit_config_change(
+        self,
+        device_id: int,
+        change_request_id: int,
+        actor_user_id: int,
+        datastore: str,
+    ) -> TaskStatus:
+        task_status = self._create_device_task(
+            DeviceTaskType.CONFIG_CHANGE,
+            device_id,
+            metadata={"datastore": datastore, "change_request_id": change_request_id},
+            actor_user_id=actor_user_id,
+            change_request_id=change_request_id,
+        )
+        run_config_change.delay(task_status.task_id)
         self._log_dispatch(task_status)
         return task_status
 
@@ -67,6 +92,8 @@ class TaskService:
         task_type: DeviceTaskType,
         device_id: int,
         metadata: dict[str, object] | None = None,
+        actor_user_id: int | None = None,
+        change_request_id: int | None = None,
     ) -> TaskStatus:
         task_id = str(uuid4())
         safe_metadata = {"device_id": device_id} | dict(redact_sensitive(metadata or {}))
@@ -75,6 +102,8 @@ class TaskService:
             task_type=task_type,
             status=DeviceTaskStatus.QUEUED,
             device_id=device_id,
+            actor_user_id=actor_user_id,
+            change_request_id=change_request_id,
             metadata_json=safe_metadata,
             context_json=safe_metadata,
         )

@@ -39,6 +39,11 @@ def run_config_snapshot(task_id: str) -> dict[str, object]:
     return _run_device_task(task_id, action="config_snapshot")
 
 
+@celery_app.task(name="star_pulse.device_config_change")
+def run_config_change(task_id: str) -> dict[str, object]:
+    return _run_device_task(task_id, action="config_change")
+
+
 def create_netconf_service() -> NetconfService:
     return NetconfService()
 
@@ -61,6 +66,8 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
                 result = service.test_connection(params)
             elif action == "config_snapshot":
                 result = service.read_config(params, _task_datastore(task))
+            elif action == "config_change":
+                result = service.write_config(params, _task_datastore(task), _task_config_body(task))
             else:
                 result = service.discover_capabilities(params)
 
@@ -74,6 +81,8 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
                     started_at=started_at,
                 )
                 repository.update_device_status(task.device_id or 0, DeviceStatus.OFFLINE)
+                if action == "config_change":
+                    _record_change_exec_failure(session, task, result.error_message or "NETCONF write failed")
                 session.commit()
                 return _task_response(task)
 
@@ -99,6 +108,9 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
                     "snapshot_id": snapshot_result.snapshot.id,
                     "snapshot": snapshot_result.snapshot.summary,
                 }
+            elif action == "config_change":
+                result_summary = result.summary
+                _record_change_exec_success(session, task)
             else:
                 result_summary = result.summary
 
@@ -210,6 +222,40 @@ def _safe_task_context(task: TaskStatus, started_at: float) -> dict[str, object]
 def _task_datastore(task: TaskStatus) -> str:
     value = task.metadata_json.get("datastore")
     return str(value or "running")
+
+
+def _task_config_body(task: TaskStatus) -> str:
+    return str(task.metadata_json.get("config_body", ""))
+
+
+def _record_change_exec_success(session, task: TaskStatus) -> None:
+    from app.auth.audit import write_audit_event
+    from app.auth.constants import AuditAction, AuditOutcome
+
+    write_audit_event(
+        session=session,
+        action=AuditAction.CHANGE_EXEC_SUCCESS,
+        outcome=AuditOutcome.SUCCESS,
+        actor_user_id=task.actor_user_id,
+        target_type="change_request",
+        target_id=str(task.change_request_id) if task.change_request_id else None,
+        metadata={"task_id": task.task_id, "device_id": task.device_id},
+    )
+
+
+def _record_change_exec_failure(session, task: TaskStatus, error_message: str) -> None:
+    from app.auth.audit import write_audit_event
+    from app.auth.constants import AuditAction, AuditOutcome
+
+    write_audit_event(
+        session=session,
+        action=AuditAction.CHANGE_EXEC_FAILURE,
+        outcome=AuditOutcome.FAILURE,
+        actor_user_id=task.actor_user_id,
+        target_type="change_request",
+        target_id=str(task.change_request_id) if task.change_request_id else None,
+        metadata={"task_id": task.task_id, "device_id": task.device_id, "error": error_message},
+    )
 
 
 def _log_task(

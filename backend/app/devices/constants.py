@@ -23,6 +23,7 @@ class DeviceTaskType(StrEnum):
     CONNECTION_TEST = "device.connection_test"
     CAPABILITY_DISCOVERY = "device.capability_discovery"
     CONFIG_SNAPSHOT = "device.config_snapshot"
+    CONFIG_CHANGE = "device.config_change"
 
 
 class DeviceConfigDatastore(StrEnum):

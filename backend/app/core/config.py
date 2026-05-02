@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_INSECURE_DEFAULT_SECRET = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_SECRET"
 
 
 class Settings(BaseSettings):
@@ -31,6 +33,39 @@ class Settings(BaseSettings):
 
     ai_agent_sdk_provider: str = "claude-agent-sdk"
     ai_agent_sdk_enabled: bool = False
+
+    # Auth / JWT
+    jwt_secret_key: str = _INSECURE_DEFAULT_SECRET
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 7
+
+    # Cookie / CORS
+    cookie_secure: bool = False
+    cookie_samesite: str = "lax"
+    cors_allowed_origins: list[str] = Field(default=["http://localhost:3000"])
+
+    # Audit
+    audit_retention_days: int = 90
+
+    # Bootstrap admin (local dev only; cleared after first use)
+    bootstrap_admin_username: str = ""
+    bootstrap_admin_password: str = ""
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def _validate_secret(cls, v: str, info: object) -> str:
+        import sys
+
+        values = getattr(info, "data", {})
+        env = values.get("environment", "development")
+        if env == "production" and v == _INSECURE_DEFAULT_SECRET:
+            print(  # noqa: T201
+                "FATAL: STAR_PULSE_JWT_SECRET_KEY must be set to a secure value in production.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        return v
 
 
 @lru_cache

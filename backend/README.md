@@ -36,6 +36,54 @@ Important environment variables:
 - `STAR_PULSE_NETCONF_HOSTKEY_VERIFY`
 - `NEXT_PUBLIC_API_BASE_URL` for the frontend, defaulting to `http://localhost:8000/api/v1`
 
+### Authentication Configuration
+
+- `STAR_PULSE_JWT_SECRET_KEY` — Required in production. Long random string. Startup fails if this is the insecure default in production environment.
+- `STAR_PULSE_JWT_ALGORITHM` — JWT signing algorithm (default: `HS256`)
+- `STAR_PULSE_ACCESS_TOKEN_TTL_MINUTES` — Access token lifetime in minutes (default: `15`)
+- `STAR_PULSE_REFRESH_TOKEN_TTL_DAYS` — Refresh token lifetime in days (default: `7`)
+- `STAR_PULSE_COOKIE_SECURE` — Set `true` in production to require HTTPS for refresh cookie (default: `false`)
+- `STAR_PULSE_CORS_ALLOWED_ORIGINS` — JSON list of allowed CORS origins (default: `["http://localhost:3000"]`)
+- `STAR_PULSE_AUDIT_RETENTION_DAYS` — Soft retention hint for audit logs (default: `90`)
+
+### Initial Admin Bootstrap (Local Development)
+
+Set the following environment variables before first startup to create an initial admin user automatically:
+
+```bash
+STAR_PULSE_BOOTSTRAP_ADMIN_USERNAME=admin
+STAR_PULSE_BOOTSTRAP_ADMIN_PASSWORD=ChangeMeNow!
+```
+
+The bootstrap runs idempotently — if the username already exists, it skips creation. Clear or unset these variables after the admin user is created in production.
+
+### Role Matrix
+
+| Role | Permissions |
+|------|-------------|
+| `viewer` | `device:read`, `task:read`, `snapshot:read`, `audit:read:summary` |
+| `operator` | viewer + `device:collect`, `device:change:submit` |
+| `approver` | operator + `device:change:approve`, `device:change:execute` |
+| `admin` | all permissions including `user:manage`, `role:manage`, `system:config`, `audit:read:full` |
+
+Roles and permissions are seeded idempotently at startup. Existing custom role-permission relationships are preserved.
+
+### Approver Direct Execution
+
+Approvers can bypass the normal submit→approve flow using the direct-execute endpoint (`POST /api/v1/change-requests/direct-execute`). Direct execution:
+- Requires a non-empty `reason` field (request is rejected without one)
+- Creates a change request record with `direct_execute: true`
+- Records a `change.direct_executed` audit event with the reason, device, datastore, and actor
+- Immediately enqueues a Celery execution task
+
+All required audit fields: `actor_user_id`, `action`, `target_type`, `target_id`, `outcome`, `permission`, `direct_execute_reason`, `device_id`, `datastore`.
+
+### Migration and Rollback
+
+Migration: run `star-pulse-migrate` or apply the Alembic revision `0004_auth_rbac_audit`. This adds users, roles, permissions, refresh tokens, change requests, audit logs tables and adds `actor_user_id`/`change_request_id` columns to `task_statuses`.
+
+Rollback: run `alembic downgrade 0003_device_config_snapshots`. In production, do not disable audit logging or bypass RBAC via config. Rollback must be coordinated with a backend service restart.
+
 ## Device Access Workflow
 
 Device onboarding stores connection details separately from runtime credentials. API callers may submit

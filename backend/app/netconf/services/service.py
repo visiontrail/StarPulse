@@ -94,6 +94,27 @@ class NetconfService:
         )
 
 
+    def write_config(
+        self, params: NetconfConnectionParams, datastore: str, config_body: str
+    ) -> NetconfOperationResult:
+        """Execute an authorized NETCONF edit-config. Only called from change control service."""
+        if datastore not in SUPPORTED_CONFIG_DATASTORES:
+            return NetconfOperationResult(
+                ok=False,
+                error_code=DeviceAccessErrorCode.INVALID_PARAMETER,
+                error_message="Unsupported datastore",
+                context={"datastore": datastore},
+            )
+        try:
+            self.client.edit_config(params, datastore, config_body)
+        except NetconfError as exc:
+            return _error_result(exc)
+        return NetconfOperationResult(
+            ok=True,
+            summary={"datastore": datastore, "write": "success"},
+        )
+
+
 def _error_result(exc: NetconfError) -> NetconfOperationResult:
     return NetconfOperationResult(
         ok=False,

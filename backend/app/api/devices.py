@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.schemas.config_snapshot import (
@@ -12,6 +10,13 @@ from app.api.schemas.config_snapshot import (
 )
 from app.api.schemas.device import DeviceCreate, DeviceProfileRead, DeviceRead
 from app.api.schemas.task import TaskRead
+from app.auth.constants import (
+    PERM_DEVICE_COLLECT,
+    PERM_DEVICE_READ,
+    PERM_SNAPSHOT_READ,
+    PERM_TASK_READ,
+)
+from app.auth.dependencies import CurrentUserDep, SessionDep, require_permission
 from app.devices.constants import SUPPORTED_CONFIG_DATASTORES
 from app.devices.repository import DeviceRepository
 from app.devices.service import (
@@ -19,32 +24,39 @@ from app.devices.service import (
     DeviceCredentialUnavailableError,
     DeviceService,
 )
-from app.storage.database import get_session
 from app.tasks.service import TaskService
 
 router = APIRouter(prefix="/devices", tags=["devices"])
-SessionDep = Annotated[Session, Depends(get_session)]
 
 
-@router.post("", response_model=DeviceRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=DeviceRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[require_permission(PERM_DEVICE_READ)],
+)
 def create_device(payload: DeviceCreate, session: SessionDep) -> DeviceRead:
     device = DeviceService(session).create_device(payload)
     return DeviceRead.model_validate(device)
 
 
-@router.get("", response_model=list[DeviceRead])
+@router.get("", response_model=list[DeviceRead], dependencies=[require_permission(PERM_DEVICE_READ)])
 def list_devices(session: SessionDep) -> list[DeviceRead]:
     devices = DeviceService(session).list_devices()
     repository = DeviceRepository(session)
     return [_device_read(device.id, session, repository=repository) for device in devices]
 
 
-@router.get("/{device_id}", response_model=DeviceRead)
+@router.get("/{device_id}", response_model=DeviceRead, dependencies=[require_permission(PERM_DEVICE_READ)])
 def get_device(device_id: int, session: SessionDep) -> DeviceRead:
     return _device_read(device_id, session)
 
 
-@router.get("/{device_id}/profile", response_model=DeviceProfileRead)
+@router.get(
+    "/{device_id}/profile",
+    response_model=DeviceProfileRead,
+    dependencies=[require_permission(PERM_DEVICE_READ)],
+)
 def get_device_profile(device_id: int, session: SessionDep) -> DeviceProfileRead:
     device = _device_read(device_id, session)
     capabilities = device.last_discovery.capabilities if device.last_discovery else []
@@ -67,6 +79,7 @@ def get_device_profile(device_id: int, session: SessionDep) -> DeviceProfileRead
     "/{device_id}/connection-test",
     response_model=TaskRead,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[require_permission(PERM_DEVICE_COLLECT)],
 )
 def submit_connection_test(device_id: int, session: SessionDep) -> TaskRead:
     _ensure_ready(device_id, session)
@@ -78,6 +91,7 @@ def submit_connection_test(device_id: int, session: SessionDep) -> TaskRead:
     "/{device_id}/capability-discovery",
     response_model=TaskRead,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[require_permission(PERM_DEVICE_COLLECT)],
 )
 def submit_capability_discovery(device_id: int, session: SessionDep) -> TaskRead:
     _ensure_ready(device_id, session)
@@ -89,17 +103,27 @@ def submit_capability_discovery(device_id: int, session: SessionDep) -> TaskRead
     "/{device_id}/config-snapshots",
     response_model=TaskRead,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[require_permission(PERM_DEVICE_COLLECT)],
 )
 def submit_config_snapshot(
-    device_id: int, payload: ConfigSnapshotCollectRequest, session: SessionDep
+    device_id: int,
+    payload: ConfigSnapshotCollectRequest,
+    session: SessionDep,
+    actor: CurrentUserDep,
 ) -> TaskRead:
     _ensure_supported_datastore(payload.datastore)
     _ensure_ready(device_id, session)
-    task_status = TaskService(session).submit_config_snapshot(device_id, payload.datastore)
+    task_status = TaskService(session).submit_config_snapshot(
+        device_id, payload.datastore, actor_user_id=actor.id
+    )
     return TaskRead.model_validate(task_status)
 
 
-@router.get("/{device_id}/config-snapshots", response_model=ConfigSnapshotListResponse)
+@router.get(
+    "/{device_id}/config-snapshots",
+    response_model=ConfigSnapshotListResponse,
+    dependencies=[require_permission(PERM_SNAPSHOT_READ)],
+)
 def list_config_snapshots(
     device_id: int,
     session: SessionDep,
@@ -117,7 +141,11 @@ def list_config_snapshots(
     )
 
 
-@router.get("/{device_id}/tasks", response_model=list[TaskRead])
+@router.get(
+    "/{device_id}/tasks",
+    response_model=list[TaskRead],
+    dependencies=[require_permission(PERM_TASK_READ)],
+)
 def list_device_tasks(
     device_id: int,
     session: SessionDep,

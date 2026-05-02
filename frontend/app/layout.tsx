@@ -1,16 +1,19 @@
 import type { Metadata } from "next";
 
 import "./globals.css";
+import { SessionProvider } from "@/lib/session";
 
 export const metadata: Metadata = {
   title: "Star Pulse Operations",
-  description: "Read-only device operations console"
+  description: "Ground management operations console"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <SessionProvider>{children}</SessionProvider>
+      </body>
     </html>
   );
 }
