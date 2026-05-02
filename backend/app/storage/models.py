@@ -107,6 +107,7 @@ class TaskStatus(TimestampMixin, Base):
     metadata_json: Mapped[dict[str, object]] = mapped_column("metadata", JSON, default=dict)
 
     device: Mapped[Device | None] = relationship()
+    actor: Mapped[User | None] = relationship(foreign_keys=[actor_user_id])
 
 
 class DeviceDiscoveryResult(TimestampMixin, Base):
@@ -254,6 +255,24 @@ class DeviceConfigChangeRequest(TimestampMixin, Base):
     submitter: Mapped[User] = relationship(foreign_keys=[submitter_id])
     approver: Mapped[User | None] = relationship(foreign_keys=[approver_id])
     executor: Mapped[User | None] = relationship(foreign_keys=[executor_id])
+    payload: Mapped[DeviceConfigChangePayload | None] = relationship(
+        back_populates="change_request",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
+
+
+class DeviceConfigChangePayload(TimestampMixin, Base):
+    __tablename__ = "device_config_change_payloads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    change_request_id: Mapped[int] = mapped_column(
+        ForeignKey("device_config_change_requests.id"), nullable=False, unique=True, index=True
+    )
+    config_body: Mapped[str] = mapped_column(Text, nullable=False)
+
+    change_request: Mapped[DeviceConfigChangeRequest] = relationship(back_populates="payload")
 
 
 class AuditLog(Base):

@@ -22,7 +22,6 @@ class DeviceConnectionRead(BaseModel):
     port: int
     protocol: str
     username: str
-    credential_ref: str | None = None
     has_credential: bool = False
 
 

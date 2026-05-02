@@ -177,6 +177,7 @@ export const api = {
     datastore: string;
     change_summary: string;
     change_ref?: string;
+    config_body?: string;
     reason: string;
   }) =>
     request<ChangeRequestRead>("/change-requests", {
@@ -202,6 +203,7 @@ export const api = {
     datastore: string;
     change_summary: string;
     change_ref?: string;
+    config_body?: string;
     reason: string;
   }) =>
     request<ChangeRequestRead>("/change-requests/direct-execute", {

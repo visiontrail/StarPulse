@@ -431,6 +431,7 @@ function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
   const [datastore, setDatastore] = useState("running");
   const [summary, setSummary] = useState("");
   const [changeRef, setChangeRef] = useState("");
+  const [configBody, setConfigBody] = useState("");
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -445,11 +446,13 @@ function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
         datastore,
         change_summary: summary,
         change_ref: changeRef.trim() || undefined,
+        config_body: configBody,
         reason
       });
       setDeviceId("");
       setSummary("");
       setChangeRef("");
+      setConfigBody("");
       setReason("");
       onSuccess();
     } catch (e) {
@@ -502,6 +505,16 @@ function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
           </div>
         </div>
         <div>
+          <FieldLabel>Config body</FieldLabel>
+          <textarea
+            required
+            value={configBody}
+            onChange={(e) => setConfigBody(e.target.value)}
+            rows={4}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs"
+          />
+        </div>
+        <div>
           <FieldLabel>Reason</FieldLabel>
           <textarea
             required
@@ -525,6 +538,7 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
   const [deviceId, setDeviceId] = useState("");
   const [datastore, setDatastore] = useState("running");
   const [summary, setSummary] = useState("");
+  const [configBody, setConfigBody] = useState("");
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -539,10 +553,11 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
         device_id: Number(deviceId),
         datastore,
         change_summary: summary,
+        config_body: configBody,
         reason
       });
       setOpen(false);
-      setSummary(""); setReason(""); setDeviceId("");
+      setSummary(""); setConfigBody(""); setReason(""); setDeviceId("");
       onSuccess();
     } catch (e) {
       setError(errorMessage(e));
@@ -587,6 +602,16 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
             className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+          />
+        </div>
+        <div>
+          <FieldLabel>Config body</FieldLabel>
+          <textarea
+            required
+            value={configBody}
+            onChange={(e) => setConfigBody(e.target.value)}
+            rows={4}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs"
           />
         </div>
         <div>

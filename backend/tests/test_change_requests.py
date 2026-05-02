@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas.device import DeviceCreate
 from app.devices.service import DeviceService
-from app.storage.models import DeviceConfigChangeRequest, TaskStatus
+from app.storage.models import DeviceConfigChangePayload, DeviceConfigChangeRequest, TaskStatus
 from tests.conftest import auth_headers, get_token
 
 
@@ -27,6 +27,7 @@ def test_operator_submit_invalid_device(client: TestClient, operator_user):
             "device_id": 99999,
             "datastore": "running",
             "change_summary": "test",
+            "config_body": "<config/>",
             "reason": "testing",
         },
         headers=auth_headers(token),
@@ -86,6 +87,7 @@ def test_approval_queues_execution_task(
             "device_id": device.id,
             "datastore": "running",
             "change_summary": "set interface description",
+            "config_body": "<config><interfaces/></config>",
             "reason": "planned maintenance",
         },
         headers=auth_headers(operator_token),
@@ -108,6 +110,7 @@ def test_approval_queues_execution_task(
     task = db_session.query(TaskStatus).filter_by(task_id=body["execution_task_id"]).one()
     assert task.change_request_id == body["id"]
     assert task.actor_user_id == approver_user.id
+    assert "config_body" not in task.metadata_json
 
 
 def test_direct_execute_creates_queued_change_request(
@@ -127,6 +130,7 @@ def test_direct_execute_creates_queued_change_request(
             "device_id": device.id,
             "datastore": "running",
             "change_summary": "emergency change",
+            "config_body": "<config><emergency/></config>",
             "reason": "restore service",
         },
         headers=auth_headers(token),
@@ -138,6 +142,27 @@ def test_direct_execute_creates_queued_change_request(
     assert body["direct_execute"] is True
     assert body["execution_task_id"] is not None
     assert dispatched == [body["execution_task_id"]]
+    assert "config_body" not in str(body)
+
+
+def test_submit_change_request_requires_config_body(
+    client: TestClient, db_session: Session, operator_user
+):
+    device = _create_ready_device(db_session)
+    token = get_token(client, "operator1")
+
+    resp = client.post(
+        "/api/v1/change-requests",
+        json={
+            "device_id": device.id,
+            "datastore": "running",
+            "change_summary": "missing body",
+            "reason": "planned maintenance",
+        },
+        headers=auth_headers(token),
+    )
+
+    assert resp.status_code == 400
 
 
 def test_config_change_task_updates_change_request_status(db_session: Session, monkeypatch):
@@ -158,6 +183,12 @@ def test_config_change_task_updates_change_request_status(db_session: Session, m
     )
     db_session.add(cr)
     db_session.flush()
+    db_session.add(
+        DeviceConfigChangePayload(
+            change_request_id=cr.id,
+            config_body="<config><interfaces/></config>",
+        )
+    )
     task = TaskStatus(
         task_id="change-task-success",
         task_type="device.config_change",
@@ -172,8 +203,12 @@ def test_config_change_task_updates_change_request_status(db_session: Session, m
     db_session.commit()
     monkeypatch.setattr("app.tasks.jobs.SessionLocal", _session_factory(db_session))
 
+    captured: dict[str, str] = {}
+
     class FakeService:
         def write_config(self, params, datastore, config_body):
+            captured["datastore"] = datastore
+            captured["config_body"] = config_body
             return NetconfOperationResult(ok=True, summary={"write": "success"})
 
     monkeypatch.setattr("app.tasks.jobs.create_netconf_service", lambda: FakeService())
@@ -186,6 +221,10 @@ def test_config_change_task_updates_change_request_status(db_session: Session, m
     assert stored is not None
     assert stored.status == "executed"
     assert stored.executed_at is not None
+    assert captured == {
+        "datastore": "running",
+        "config_body": "<config><interfaces/></config>",
+    }
 
 
 def _create_ready_device(db_session: Session):

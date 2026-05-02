@@ -40,6 +40,7 @@ def submit_change_request(
             datastore=payload.datastore,
             change_summary=payload.change_summary,
             change_ref=payload.change_ref,
+            config_body=payload.config_body,
             reason=payload.reason,
             ip_address=request.client.host if request.client else None,
         )
@@ -148,6 +149,7 @@ def direct_execute(
             datastore=payload.datastore,
             change_summary=payload.change_summary,
             change_ref=payload.change_ref,
+            config_body=payload.config_body,
             reason=payload.reason,
             ip_address=request.client.host if request.client else None,
         )

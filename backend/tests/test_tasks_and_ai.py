@@ -90,6 +90,51 @@ def test_device_task_api_dispatches_without_leaking_secret(
 
 
 def test_config_snapshot_api_dispatches_task_with_safe_metadata(
+    client: TestClient, db_session: Session, operator_user, monkeypatch
+) -> None:
+    dispatched: list[str] = []
+
+    def fake_delay(task_id: str) -> None:
+        dispatched.append(task_id)
+
+    monkeypatch.setattr("app.tasks.service.run_config_snapshot.delay", fake_delay)
+
+    from tests.conftest import auth_headers, get_token
+
+    admin_token = get_token(client, "operator1")
+    headers = auth_headers(admin_token)
+    device = DeviceService(db_session).create_device(
+        DeviceCreate(
+            name="sat-router-config-api",
+            connection={
+                "host": "192.0.2.32",
+                "username": "netconf",
+                "password": "api-secret",
+            },
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/devices/{device.id}/config-snapshots",
+        json={"datastore": "running"},
+        headers=headers,
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["task_type"] == "device.config_snapshot"
+    assert body["actor_user_id"] == operator_user.id
+    assert body["actor"]["username"] == "operator1"
+    assert body["metadata"] == {"device_id": device.id, "datastore": "running"}
+    assert dispatched == [body["task_id"]]
+    assert "api-secret" not in str(body)
+
+    detail = client.get(f"/api/v1/tasks/{body['task_id']}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["actor"]["username"] == "operator1"
+
+
+def test_config_snapshot_api_admin_dispatches_task_with_safe_metadata(
     authed_client: TestClient, monkeypatch
 ) -> None:
     dispatched: list[str] = []

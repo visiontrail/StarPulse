@@ -34,6 +34,7 @@ def test_create_and_fetch_device(authed_client: TestClient) -> None:
     assert body["connection"]["host"] == "192.0.2.10"
     assert body["connection"]["has_credential"] is True
     assert "password" not in body["connection"]
+    assert "credential_ref" not in body["connection"]
 
     list_response = authed_client.get("/api/v1/devices")
     assert list_response.status_code == 200
@@ -43,6 +44,7 @@ def test_create_and_fetch_device(authed_client: TestClient) -> None:
     detail_response = authed_client.get(f"/api/v1/devices/{body['id']}")
     assert detail_response.status_code == 200
     assert detail_response.json()["serial_number"] == "SR-001"
+    assert "credential_ref" not in detail_response.json()["connection"]
 
 
 def test_device_repository_persists_connection_credential_ref_and_discovery(
@@ -220,6 +222,7 @@ def test_config_snapshot_list_and_profile_api_are_safe(
     assert profile["last_config_snapshot"]["content_digest"] == "sha256:profile"
     assert profile["recent_tasks"][0]["task_id"] == "task-config-profile"
     assert profile["safety_summary"]["exposes_full_config"] is False
+    assert "credential_ref" not in profile["connection"]
     assert detail_response.json()["last_config_snapshot"]["content_digest"] == "sha256:profile"
     assert "profile-secret" not in str(profile_response.json())
 

@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.schemas.auth import UserSummary
+
 
 class TaskCreate(BaseModel):
     task_type: str = Field(default="sample.health", min_length=1, max_length=128)
@@ -17,6 +19,8 @@ class TaskRead(BaseModel):
     task_type: str
     status: str
     device_id: int | None = None
+    actor_user_id: int | None = None
+    actor: UserSummary | None = None
     result_summary: dict[str, object] | None = None
     error_code: str | None = None
     error_message: str | None = None

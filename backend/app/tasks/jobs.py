@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 from time import monotonic
 
+from app.auth.repositories import ChangeRequestRepository
 from app.common.redaction import redact_sensitive
 from app.core.config import get_settings
 from app.devices.config_snapshots import ConfigSnapshotService
@@ -17,6 +18,10 @@ from app.storage.models import DeviceConfigChangeRequest, TaskStatus
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+class ChangePayloadUnavailableError(RuntimeError):
+    pass
 
 
 @celery_app.task(name="star_pulse.sample_health")
@@ -68,7 +73,7 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
                 result = service.read_config(params, _task_datastore(task))
             elif action == "config_change":
                 result = service.write_config(
-                    params, _task_datastore(task), _task_config_body(task)
+                    params, _task_datastore(task), _task_config_body(task, session)
                 )
             else:
                 result = service.discover_capabilities(params)
@@ -149,6 +154,27 @@ def _run_device_task(task_id: str, *, action: str) -> dict[str, object]:
             )
             if action == "config_change":
                 _record_change_exec_failure(session, task, "Device credential is unavailable")
+                _mark_change_request_finished(
+                    session, task, status="failed", executed_at=datetime.now(UTC)
+                )
+            session.commit()
+            return _task_response(task)
+        except ChangePayloadUnavailableError:
+            session.rollback()
+            task = session.query(TaskStatus).filter(TaskStatus.task_id == task_id).one()
+            repository = DeviceRepository(session)
+            _mark_failed(
+                repository,
+                task,
+                error_code=DeviceAccessErrorCode.INVALID_PARAMETER,
+                error_message="Config change payload is unavailable",
+                context={"device_id": task.device_id, "change_request_id": task.change_request_id},
+                started_at=started_at,
+            )
+            if action == "config_change":
+                _record_change_exec_failure(
+                    session, task, "Config change payload is unavailable"
+                )
                 _mark_change_request_finished(
                     session, task, status="failed", executed_at=datetime.now(UTC)
                 )
@@ -244,8 +270,13 @@ def _task_datastore(task: TaskStatus) -> str:
     return str(value or "running")
 
 
-def _task_config_body(task: TaskStatus) -> str:
-    return str(task.metadata_json.get("config_body", ""))
+def _task_config_body(task: TaskStatus, session) -> str:
+    if task.change_request_id is None:
+        raise ChangePayloadUnavailableError("Task is missing change request context")
+    payload = ChangeRequestRepository(session).get_payload(task.change_request_id)
+    if payload is None or not payload.config_body.strip():
+        raise ChangePayloadUnavailableError("Config change payload is unavailable")
+    return payload.config_body
 
 
 def _record_change_exec_success(session, task: TaskStatus) -> None:

@@ -160,6 +160,7 @@ class ChangeRequestSubmitRequest(BaseModel):
     datastore: str
     change_summary: str = Field(min_length=1)
     change_ref: str | None = None
+    config_body: str | None = Field(default=None, min_length=1)
     reason: str = Field(min_length=1)
 
 
@@ -176,6 +177,7 @@ class ChangeRequestDirectExecuteRequest(BaseModel):
     datastore: str
     change_summary: str = Field(min_length=1)
     change_ref: str | None = None
+    config_body: str | None = Field(default=None, min_length=1)
     reason: str = Field(min_length=1)
 
 

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.storage.models import (
     AuditLog,
+    DeviceConfigChangePayload,
     DeviceConfigChangeRequest,
     Permission,
     RefreshToken,
@@ -154,6 +155,24 @@ class ChangeRequestRepository:
         self.session.flush()
         self.session.refresh(cr)
         return cr
+
+    def create_payload(
+        self, change_request_id: int, config_body: str
+    ) -> DeviceConfigChangePayload:
+        payload = DeviceConfigChangePayload(
+            change_request_id=change_request_id,
+            config_body=config_body,
+        )
+        self.session.add(payload)
+        self.session.flush()
+        return payload
+
+    def get_payload(self, change_request_id: int) -> DeviceConfigChangePayload | None:
+        return self.session.scalar(
+            select(DeviceConfigChangePayload).where(
+                DeviceConfigChangePayload.change_request_id == change_request_id
+            )
+        )
 
 
 class AuditLogRepository:

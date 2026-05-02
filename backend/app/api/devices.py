@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.schemas.config_snapshot import (
@@ -10,12 +10,15 @@ from app.api.schemas.config_snapshot import (
 )
 from app.api.schemas.device import DeviceCreate, DeviceProfileRead, DeviceRead
 from app.api.schemas.task import TaskRead
+from app.auth.audit import write_audit_event
 from app.auth.constants import (
     PERM_DEVICE_COLLECT,
     PERM_DEVICE_MANAGE,
     PERM_DEVICE_READ,
     PERM_SNAPSHOT_READ,
     PERM_TASK_READ,
+    AuditAction,
+    AuditOutcome,
 )
 from app.auth.dependencies import CurrentUserDep, SessionDep, require_permission
 from app.devices.constants import SUPPORTED_CONFIG_DATASTORES
@@ -117,11 +120,37 @@ def submit_capability_discovery(device_id: int, session: SessionDep) -> TaskRead
 def submit_config_snapshot(
     device_id: int,
     payload: ConfigSnapshotCollectRequest,
+    request: Request,
     session: SessionDep,
     actor: CurrentUserDep,
 ) -> TaskRead:
-    _ensure_supported_datastore(payload.datastore)
-    _ensure_ready(device_id, session)
+    if payload.datastore not in SUPPORTED_CONFIG_DATASTORES:
+        _audit_collect_failure(
+            session=session,
+            actor_id=actor.id,
+            device_id=device_id,
+            datastore=payload.datastore,
+            reason="unsupported_datastore",
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported datastore",
+        )
+    try:
+        _ensure_ready(device_id, session)
+    except HTTPException as exc:
+        _audit_collect_failure(
+            session=session,
+            actor_id=actor.id,
+            device_id=device_id,
+            datastore=payload.datastore,
+            reason=str(exc.detail),
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        raise
     task_status = TaskService(session).submit_config_snapshot(
         device_id, payload.datastore, actor_user_id=actor.id
     )
@@ -193,6 +222,31 @@ def _ensure_supported_datastore(datastore: str) -> None:
         )
 
 
+def _audit_collect_failure(
+    *,
+    session: Session,
+    actor_id: int,
+    device_id: int,
+    datastore: str,
+    reason: str,
+    ip_address: str | None,
+    user_agent: str | None,
+) -> None:
+    write_audit_event(
+        session=session,
+        action=AuditAction.VALIDATION_FAILED,
+        outcome=AuditOutcome.FAILURE,
+        actor_user_id=actor_id,
+        target_type="device",
+        target_id=str(device_id),
+        permission=PERM_DEVICE_COLLECT,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"operation": "config_snapshot_collect", "datastore": datastore, "reason": reason},
+    )
+    session.commit()
+
+
 def _ensure_device_exists(device_id: int, session: Session) -> None:
     if DeviceService(session).get_device(device_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
@@ -219,6 +273,16 @@ def _device_read(
                     "task_id": task.task_id,
                     "task_type": task.task_type,
                     "status": task.status,
+                    "actor_user_id": task.actor_user_id,
+                    "actor": (
+                        {
+                            "id": task.actor.id,
+                            "username": task.actor.username,
+                            "display_name": task.actor.display_name,
+                        }
+                        if task.actor is not None
+                        else None
+                    ),
                     "error_code": task.error_code,
                     "error_message": task.error_message,
                     "created_at": task.created_at,

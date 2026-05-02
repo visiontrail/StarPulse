@@ -125,7 +125,6 @@ export type DeviceConnection = {
   port: number;
   protocol: string;
   username: string;
-  credential_ref: string | null;
   has_credential: boolean;
 };
 
@@ -151,6 +150,8 @@ export type TaskSummary = {
   task_id: string;
   task_type: string;
   status: "queued" | "running" | "succeeded" | "failed" | string;
+  actor_user_id: number | null;
+  actor: UserSummary | null;
   error_code: string | null;
   error_message: string | null;
   created_at: string;

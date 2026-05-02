@@ -33,9 +33,16 @@ class ChangeRequestService:
         datastore: str,
         change_summary: str,
         change_ref: str | None,
+        config_body: str | None,
         reason: str,
         ip_address: str | None = None,
     ) -> DeviceConfigChangeRequest:
+        config_body = self._require_config_body(
+            actor=actor,
+            device_id=device_id,
+            config_body=config_body,
+            ip_address=ip_address,
+        )
         if datastore not in SUPPORTED_CONFIG_DATASTORES:
             write_audit_event(
                 session=self.session,
@@ -74,6 +81,7 @@ class ChangeRequestService:
             status="pending_approval",
             submitter_id=actor.id,
         )
+        self._repo.create_payload(change_request_id=cr.id, config_body=config_body)
         write_audit_event(
             session=self.session,
             action=AuditAction.CHANGE_SUBMITTED,
@@ -85,6 +93,7 @@ class ChangeRequestService:
                 "device_id": device_id,
                 "datastore": datastore,
                 "change_summary": change_summary[:200],
+                "config_body_length": len(config_body),
             },
             ip_address=ip_address,
         )
@@ -165,9 +174,16 @@ class ChangeRequestService:
         datastore: str,
         change_summary: str,
         change_ref: str | None,
+        config_body: str | None,
         reason: str,
         ip_address: str | None = None,
     ) -> DeviceConfigChangeRequest:
+        config_body = self._require_config_body(
+            actor=actor,
+            device_id=device_id,
+            config_body=config_body,
+            ip_address=ip_address,
+        )
         if datastore not in SUPPORTED_CONFIG_DATASTORES:
             write_audit_event(
                 session=self.session,
@@ -210,6 +226,7 @@ class ChangeRequestService:
             direct_execute_reason=reason,
             executor_id=actor.id,
         )
+        self._repo.create_payload(change_request_id=cr.id, config_body=config_body)
         write_audit_event(
             session=self.session,
             action=AuditAction.CHANGE_DIRECT_EXECUTED,
@@ -223,6 +240,7 @@ class ChangeRequestService:
                 "change_summary": change_summary[:200],
                 "direct_execute_reason": reason[:200],
                 "direct_execute": True,
+                "config_body_length": len(config_body),
             },
             ip_address=ip_address,
         )
@@ -256,3 +274,26 @@ class ChangeRequestService:
         if cr.status != "pending_approval":
             raise ChangeRequestError(f"Change request is not pending approval (status={cr.status})")
         return cr
+
+    def _require_config_body(
+        self,
+        *,
+        actor: User,
+        device_id: int,
+        config_body: str | None,
+        ip_address: str | None,
+    ) -> str:
+        if config_body is None or not config_body.strip():
+            write_audit_event(
+                session=self.session,
+                action=AuditAction.VALIDATION_FAILED,
+                outcome=AuditOutcome.FAILURE,
+                actor_user_id=actor.id,
+                target_type="device",
+                target_id=str(device_id),
+                metadata={"reason": "config_body_missing"},
+                ip_address=ip_address,
+            )
+            self.session.commit()
+            raise ChangeRequestError("Config body is required for executable config changes")
+        return config_body

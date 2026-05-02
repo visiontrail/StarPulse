@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.audit import write_audit_event
 from app.auth.constants import AuditAction, AuditOutcome
+from app.auth.repositories import AuditLogRepository
 from tests.conftest import auth_headers, get_token
 
 
@@ -34,7 +35,6 @@ def test_audit_metadata_redaction(db_session: Session):
         metadata={"password": "secret123", "username": "test"},
     )
     db_session.commit()
-    from app.auth.repositories import AuditLogRepository
     logs = AuditLogRepository(db_session).list_paginated(action=AuditAction.LOGIN_FAILURE)
     assert logs, "expected audit log"
     meta = logs[0].metadata_json
@@ -45,6 +45,24 @@ def test_audit_metadata_redaction(db_session: Session):
 def test_permission_denied_audit(client: TestClient, viewer_user, db_session: Session):
     token = get_token(client, "viewer1")
     client.get("/api/v1/admin/users", headers=auth_headers(token))
+    db_session.rollback()
     resp = client.get("/api/v1/audit/logs", headers=auth_headers(token))
     actions = [item["action"] for item in resp.json()["items"]]
     assert AuditAction.PERMISSION_DENIED in actions
+
+
+def test_config_snapshot_validation_failure_is_audited(
+    client: TestClient, operator_user, db_session: Session
+):
+    token = get_token(client, "operator1")
+    resp = client.post(
+        "/api/v1/devices/999/config-snapshots",
+        json={"datastore": "intended"},
+        headers=auth_headers(token),
+    )
+
+    assert resp.status_code == 400
+    logs = AuditLogRepository(db_session).list_paginated(action=AuditAction.VALIDATION_FAILED)
+    assert logs
+    assert logs[0].permission == "device:collect"
+    assert logs[0].metadata_json["reason"] == "unsupported_datastore"
