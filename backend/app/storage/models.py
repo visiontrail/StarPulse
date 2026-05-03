@@ -221,9 +221,14 @@ class RefreshToken(Base):
 
     @property
     def is_valid(self) -> bool:
+        from datetime import UTC
+
         from app.common.time import utc_now
 
-        return self.revoked_at is None and self.expires_at > utc_now()
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return self.revoked_at is None and expires_at > utc_now()
 
 
 class DeviceConfigChangeRequest(TimestampMixin, Base):

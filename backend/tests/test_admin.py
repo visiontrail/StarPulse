@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.auth.constants import AuditAction
+from app.auth.repositories import AuditLogRepository
 from tests.conftest import auth_headers, get_token
 
 
@@ -36,6 +38,11 @@ def test_admin_assign_role(client: TestClient, admin_user, viewer_user, db_sessi
     assert resp.status_code == 200
     role_names = [r["name"] for r in resp.json()["roles"]]
     assert "operator" in role_names
+
+    logs = AuditLogRepository(db_session).list_paginated(action=AuditAction.ROLE_ASSIGNED)
+    assert logs
+    assert logs[0].metadata_json["roles_before"] == ["viewer"]
+    assert logs[0].metadata_json["roles_after"] == ["operator", "viewer"]
 
 
 def test_admin_disable_user(client: TestClient, admin_user, viewer_user):

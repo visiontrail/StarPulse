@@ -34,6 +34,7 @@ export type CurrentUser = {
   username: string;
   display_name: string;
   is_active: boolean;
+  session_valid: boolean;
   roles: string[];
   permissions: string[];
 };

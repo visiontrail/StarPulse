@@ -156,8 +156,10 @@ def assign_role(
     role = RoleRepository(session).get_by_id(payload.role_id)
     if role is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+    roles_before = _role_names(user)
     if role not in user.roles:
         user.roles.append(role)
+    roles_after = _role_names(user)
     write_audit_event(
         session=session,
         action=AuditAction.ROLE_ASSIGNED,
@@ -167,7 +169,12 @@ def assign_role(
         target_id=str(user.id),
         permission=PERM_ROLE_MANAGE,
         ip_address=request.client.host if request.client else None,
-        metadata={"role_name": role.name, "role_id": role.id},
+        metadata={
+            "role_name": role.name,
+            "role_id": role.id,
+            "roles_before": roles_before,
+            "roles_after": roles_after,
+        },
     )
     session.commit()
     session.refresh(user)
@@ -190,7 +197,9 @@ def remove_role(
     role = next((r for r in user.roles if r.id == role_id), None)
     if role is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not assigned")
+    roles_before = _role_names(user)
     user.roles.remove(role)
+    roles_after = _role_names(user)
     write_audit_event(
         session=session,
         action=AuditAction.ROLE_REMOVED,
@@ -200,7 +209,12 @@ def remove_role(
         target_id=str(user.id),
         permission=PERM_ROLE_MANAGE,
         ip_address=request.client.host if request.client else None,
-        metadata={"role_name": role.name, "role_id": role.id},
+        metadata={
+            "role_name": role.name,
+            "role_id": role.id,
+            "roles_before": roles_before,
+            "roles_after": roles_after,
+        },
     )
     session.commit()
     session.refresh(user)
@@ -267,3 +281,7 @@ def _get_user_or_404(session: Session, user_id: int) -> User:
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
+
+
+def _role_names(user: User) -> list[str]:
+    return sorted(role.name for role in user.roles)

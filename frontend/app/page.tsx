@@ -188,6 +188,7 @@ function DevicesTab() {
   );
 
   const canCollect = hasPermission(PERM.DEVICE_COLLECT);
+  const canSubmitChange = hasPermission(PERM.DEVICE_CHANGE_SUBMIT);
 
   async function submitSnapshot() {
     if (!selectedDeviceId || configTaskRunning || !canCollect) return;
@@ -304,6 +305,13 @@ function DevicesTab() {
                   lastTask={lastTask}
                   configTaskRunning={Boolean(configTaskRunning)}
                 />
+                {canSubmitChange ? (
+                  <ChangeRequestForm
+                    initialDeviceId={selectedDevice.id}
+                    onSuccess={() => undefined}
+                    compact
+                  />
+                ) : null}
                 <RecentTasks tasks={profile?.recent_tasks ?? []} />
               </div>
             </div>
@@ -426,8 +434,16 @@ function ChangesTab() {
   );
 }
 
-function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
-  const [deviceId, setDeviceId] = useState("");
+function ChangeRequestForm({
+  onSuccess,
+  initialDeviceId,
+  compact = false
+}: {
+  onSuccess: () => void;
+  initialDeviceId?: number;
+  compact?: boolean;
+}) {
+  const [deviceId, setDeviceId] = useState(initialDeviceId ? String(initialDeviceId) : "");
   const [datastore, setDatastore] = useState("running");
   const [summary, setSummary] = useState("");
   const [changeRef, setChangeRef] = useState("");
@@ -435,6 +451,12 @@ function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialDeviceId) {
+      setDeviceId(String(initialDeviceId));
+    }
+  }, [initialDeviceId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -449,7 +471,7 @@ function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
         config_body: configBody,
         reason
       });
-      setDeviceId("");
+      setDeviceId(initialDeviceId ? String(initialDeviceId) : "");
       setSummary("");
       setChangeRef("");
       setConfigBody("");
@@ -464,9 +486,11 @@ function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <div className="rounded border border-warm bg-canvas/95 p-4">
-      <h3 className="mb-3 font-semibold text-sm">Submit Change Request</h3>
+      <h3 className="mb-3 font-semibold text-sm">
+        {compact ? "Request Config Change" : "Submit Change Request"}
+      </h3>
       <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className={cn("grid gap-3", compact ? "" : "sm:grid-cols-2")}>
           <div>
             <FieldLabel>Device ID</FieldLabel>
             <input
@@ -474,8 +498,9 @@ function ChangeRequestForm({ onSuccess }: { onSuccess: () => void }) {
               required
               min={1}
               value={deviceId}
+              disabled={Boolean(initialDeviceId)}
               onChange={(e) => setDeviceId(e.target.value)}
-              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm disabled:text-muted"
             />
           </div>
           <div>
@@ -971,9 +996,11 @@ function RolePermissionEditor({
 // ── Audit Tab ──────────────────────────────────────────────────────────────
 
 function AuditTab() {
+  const { hasPermission } = useSession();
   const [logs, setLogs] = useState<AuditLogRead[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasFullAudit = hasPermission(PERM.AUDIT_READ_FULL);
 
   const loadLogs = useCallback(async () => {
     setLoading(true);
@@ -1003,14 +1030,16 @@ function AuditTab() {
         <EmptyState icon={<FileClock className="h-6 w-6" />} title="No audit events" />
       ) : null}
       <div className="overflow-x-auto rounded border border-warm">
-        <table className="w-full min-w-[600px] border-collapse text-sm">
+        <table className="w-full min-w-[760px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-warm text-left font-mono text-[11px] uppercase text-muted">
               <th className="px-3 py-2 font-medium">Time</th>
               <th className="px-3 py-2 font-medium">Action</th>
               <th className="px-3 py-2 font-medium">Actor</th>
               <th className="px-3 py-2 font-medium">Target</th>
+              <th className="px-3 py-2 font-medium">Permission</th>
               <th className="px-3 py-2 font-medium">Outcome</th>
+              {hasFullAudit ? <th className="px-3 py-2 font-medium">Context</th> : null}
             </tr>
           </thead>
           <tbody>
@@ -1020,9 +1049,21 @@ function AuditTab() {
                 <td className="px-3 py-2 font-mono text-xs">{log.action}</td>
                 <td className="px-3 py-2 text-xs">{log.actor_user_id ?? "-"}</td>
                 <td className="px-3 py-2 text-xs text-muted">{log.target_type ?? "-"}</td>
+                <td className="px-3 py-2 font-mono text-xs text-muted">
+                  {log.permission ?? "-"}
+                </td>
                 <td className="px-3 py-2">
                   <StatusBadge status={log.outcome} />
                 </td>
+                {hasFullAudit ? (
+                  <td className="max-w-[320px] px-3 py-2">
+                    <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words rounded bg-paper p-2 font-mono text-[11px] text-muted">
+                      {Object.keys(log.metadata).length > 0
+                        ? JSON.stringify(log.metadata, null, 2)
+                        : "{}"}
+                    </pre>
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>

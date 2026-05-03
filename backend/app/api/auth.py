@@ -46,6 +46,7 @@ def _build_current_user(user: User) -> CurrentUserRead:
         username=user.username,
         display_name=user.display_name,
         is_active=user.is_active,
+        session_valid=True,
         roles=roles,
         permissions=perms,
     )
@@ -131,6 +132,7 @@ def refresh_token(
 
     if not refresh_token:
         _record_refresh_failure(session, ip, ua)
+        session.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token"
         )

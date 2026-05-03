@@ -20,6 +20,7 @@ const API_BASE_URL =
 
 let _accessToken: string | null = null;
 let _onSessionExpired: (() => void) | null = null;
+let _onSessionRefreshed: ((user: CurrentUser) => void) | null = null;
 
 export function setAccessToken(token: string | null): void {
   _accessToken = token;
@@ -31,6 +32,10 @@ export function getAccessToken(): string | null {
 
 export function onSessionExpired(cb: () => void): void {
   _onSessionExpired = cb;
+}
+
+export function onSessionRefreshed(cb: (user: CurrentUser) => void): void {
+  _onSessionRefreshed = cb;
 }
 
 // ── Core fetch ─────────────────────────────────────────────────────────────
@@ -69,6 +74,9 @@ async function request<T>(
     const detail = await response.text();
     throw new Error(detail || `Request failed with ${response.status}`);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return response.json() as Promise<T>;
 }
 
@@ -82,10 +90,30 @@ async function tryRefresh(): Promise<boolean> {
     if (!res.ok) return false;
     const data = (await res.json()) as { access_token: string };
     _accessToken = data.access_token;
+    const me = await fetchCurrentUser();
+    _onSessionRefreshed?.(me);
     return true;
   } catch {
     return false;
   }
+}
+
+async function fetchCurrentUser(): Promise<CurrentUser> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  if (_accessToken) {
+    headers.Authorization = `Bearer ${_accessToken}`;
+  }
+  const res = await fetch(`${API_BASE_URL}/auth/me`, {
+    headers,
+    credentials: "include",
+    cache: "no-store"
+  });
+  if (!res.ok) {
+    throw new Error("Unable to load current user");
+  }
+  return res.json() as Promise<CurrentUser>;
 }
 
 // ── Auth endpoints ─────────────────────────────────────────────────────────
@@ -114,7 +142,7 @@ async function refreshSession(): Promise<CurrentUser | null> {
     if (!res.ok) return null;
     const data = (await res.json()) as { access_token: string };
     _accessToken = data.access_token;
-    const me = await request<CurrentUser>("/auth/me", undefined, false);
+    const me = await fetchCurrentUser();
     return me;
   } catch {
     return null;

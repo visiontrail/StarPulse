@@ -67,6 +67,7 @@ class CurrentUserRead(BaseModel):
     username: str
     display_name: str
     is_active: bool
+    session_valid: bool
     roles: list[str]
     permissions: list[str]
 

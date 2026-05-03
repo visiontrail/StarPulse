@@ -9,7 +9,7 @@ import React, {
   useState
 } from "react";
 
-import { api, onSessionExpired, setAccessToken } from "@/lib/api";
+import { api, onSessionExpired, onSessionRefreshed, setAccessToken } from "@/lib/api";
 import type { CurrentUser } from "@/lib/types";
 import { PERM } from "@/lib/types";
 
@@ -38,6 +38,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     onSessionExpired(clearSession);
+    onSessionRefreshed((me) => {
+      setUser(me);
+      setState("authenticated");
+    });
   }, [clearSession]);
 
   useEffect(() => {
