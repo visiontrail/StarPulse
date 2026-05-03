@@ -249,14 +249,36 @@ class DeviceConfigChangeRequest(TimestampMixin, Base):
     approval_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    baseline_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("device_config_snapshots.id"), nullable=True, index=True
+    )
+    preflight_status: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    preflight_summary: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    risk_summary: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    preflight_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     direct_execute: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     direct_execute_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     executor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     execution_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    verification_status: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    verification_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("device_config_snapshots.id"), nullable=True, index=True
+    )
+    verification_summary: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     device: Mapped[Device] = relationship()
+    baseline_snapshot: Mapped[DeviceConfigSnapshot | None] = relationship(
+        foreign_keys=[baseline_snapshot_id]
+    )
+    verification_snapshot: Mapped[DeviceConfigSnapshot | None] = relationship(
+        foreign_keys=[verification_snapshot_id]
+    )
     submitter: Mapped[User] = relationship(foreign_keys=[submitter_id])
     approver: Mapped[User | None] = relationship(foreign_keys=[approver_id])
     executor: Mapped[User | None] = relationship(foreign_keys=[executor_id])

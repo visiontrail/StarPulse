@@ -8,7 +8,12 @@ from app.api.schemas.config_snapshot import (
     ConfigSnapshotListResponse,
     ConfigSnapshotSummaryRead,
 )
-from app.api.schemas.device import DeviceCreate, DeviceProfileRead, DeviceRead
+from app.api.schemas.device import (
+    DeviceCreate,
+    DeviceOnboardingSummary,
+    DeviceProfileRead,
+    DeviceRead,
+)
 from app.api.schemas.task import TaskRead
 from app.auth.audit import write_audit_event
 from app.auth.constants import (
@@ -21,13 +26,14 @@ from app.auth.constants import (
     AuditOutcome,
 )
 from app.auth.dependencies import CurrentUserDep, SessionDep, require_permission
-from app.devices.constants import SUPPORTED_CONFIG_DATASTORES
+from app.devices.constants import SUPPORTED_CONFIG_DATASTORES, DeviceTaskStatus, DeviceTaskType
 from app.devices.repository import DeviceRepository
 from app.devices.service import (
     DeviceConnectionConfigMissingError,
     DeviceCredentialUnavailableError,
     DeviceService,
 )
+from app.storage.models import Device, TaskStatus
 from app.tasks.service import TaskService
 
 router = APIRouter(prefix="/devices", tags=["devices"])
@@ -39,9 +45,32 @@ router = APIRouter(prefix="/devices", tags=["devices"])
     status_code=status.HTTP_201_CREATED,
     dependencies=[require_permission(PERM_DEVICE_MANAGE)],
 )
-def create_device(payload: DeviceCreate, session: SessionDep) -> DeviceRead:
+def create_device(
+    payload: DeviceCreate,
+    request: Request,
+    session: SessionDep,
+    actor: CurrentUserDep,
+) -> DeviceRead:
     device = DeviceService(session).create_device(payload)
-    return DeviceRead.model_validate(device)
+    write_audit_event(
+        session=session,
+        action=AuditAction.DEVICE_ONBOARDING_CREATED,
+        outcome=AuditOutcome.SUCCESS,
+        actor_user_id=actor.id,
+        target_type="device",
+        target_id=str(device.id),
+        permission=PERM_DEVICE_MANAGE,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={
+            "device_id": device.id,
+            "name": device.name,
+            "connection_host": device.connection.host if device.connection else None,
+            "has_credential": bool(device.connection and device.connection.has_credential),
+        },
+    )
+    session.commit()
+    return _device_read(device.id, session)
 
 
 @router.get(
@@ -93,9 +122,23 @@ def get_device_profile(device_id: int, session: SessionDep) -> DeviceProfileRead
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[require_permission(PERM_DEVICE_COLLECT)],
 )
-def submit_connection_test(device_id: int, session: SessionDep) -> TaskRead:
+def submit_connection_test(
+    device_id: int,
+    request: Request,
+    session: SessionDep,
+    actor: CurrentUserDep,
+) -> TaskRead:
     _ensure_ready(device_id, session)
-    task_status = TaskService(session).submit_connection_test(device_id)
+    task_status = TaskService(session).submit_connection_test(device_id, actor_user_id=actor.id)
+    _audit_onboarding_step_queued(
+        session=session,
+        actor_id=actor.id,
+        device_id=device_id,
+        step="connection_test",
+        task=task_status,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return TaskRead.model_validate(task_status)
 
 
@@ -105,9 +148,25 @@ def submit_connection_test(device_id: int, session: SessionDep) -> TaskRead:
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[require_permission(PERM_DEVICE_COLLECT)],
 )
-def submit_capability_discovery(device_id: int, session: SessionDep) -> TaskRead:
+def submit_capability_discovery(
+    device_id: int,
+    request: Request,
+    session: SessionDep,
+    actor: CurrentUserDep,
+) -> TaskRead:
     _ensure_ready(device_id, session)
-    task_status = TaskService(session).submit_capability_discovery(device_id)
+    task_status = TaskService(session).submit_capability_discovery(
+        device_id, actor_user_id=actor.id
+    )
+    _audit_onboarding_step_queued(
+        session=session,
+        actor_id=actor.id,
+        device_id=device_id,
+        step="capability_discovery",
+        task=task_status,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return TaskRead.model_validate(task_status)
 
 
@@ -153,6 +212,16 @@ def submit_config_snapshot(
         raise
     task_status = TaskService(session).submit_config_snapshot(
         device_id, payload.datastore, actor_user_id=actor.id
+    )
+    _audit_onboarding_step_queued(
+        session=session,
+        actor_id=actor.id,
+        device_id=device_id,
+        step="baseline_snapshot",
+        task=task_status,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={"datastore": payload.datastore},
     )
     return TaskRead.model_validate(task_status)
 
@@ -247,6 +316,38 @@ def _audit_collect_failure(
     session.commit()
 
 
+def _audit_onboarding_step_queued(
+    *,
+    session: Session,
+    actor_id: int,
+    device_id: int,
+    step: str,
+    task: TaskStatus,
+    ip_address: str | None,
+    user_agent: str | None,
+    metadata: dict[str, object] | None = None,
+) -> None:
+    write_audit_event(
+        session=session,
+        action=AuditAction.DEVICE_ONBOARDING_STEP_QUEUED,
+        outcome=AuditOutcome.SUCCESS,
+        actor_user_id=actor_id,
+        target_type="device",
+        target_id=str(device_id),
+        permission=PERM_DEVICE_COLLECT,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={
+            "device_id": device_id,
+            "step": step,
+            "task_id": task.task_id,
+            "status": task.status,
+        }
+        | (metadata or {}),
+    )
+    session.commit()
+
+
 def _ensure_device_exists(device_id: int, session: Session) -> None:
     if DeviceService(session).get_device(device_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
@@ -290,5 +391,103 @@ def _device_read(
                 }
                 for task in recent_tasks
             ],
+            "onboarding_summary": _onboarding_summary(device, last_snapshot, recent_tasks),
         }
     )
+
+
+def _onboarding_summary(
+    device: Device,
+    last_snapshot: object | None,
+    recent_tasks: list[TaskStatus],
+) -> DeviceOnboardingSummary:
+    connection_task = _latest_task(recent_tasks, DeviceTaskType.CONNECTION_TEST)
+    discovery_task = _latest_task(recent_tasks, DeviceTaskType.CAPABILITY_DISCOVERY)
+    snapshot_task = _latest_task(recent_tasks, DeviceTaskType.CONFIG_SNAPSHOT)
+    blockers: list[str] = []
+
+    has_connection = device.connection is not None
+    has_credential = bool(device.connection and device.connection.has_credential)
+    connection_ok = bool(
+        connection_task and connection_task.status == DeviceTaskStatus.SUCCEEDED
+    )
+    discovery_ok = device.last_discovery is not None
+    baseline_ok = last_snapshot is not None
+
+    if not has_connection:
+        blockers.append("connection_config_missing")
+    elif not has_credential:
+        blockers.append("credential_unavailable")
+    elif not connection_ok:
+        blockers.append("connection_test_required")
+    if not discovery_ok:
+        blockers.append("capability_discovery_required")
+    if not baseline_ok:
+        blockers.append("baseline_snapshot_required")
+
+    ready_for_change = (
+        has_connection and has_credential and connection_ok and discovery_ok and baseline_ok
+    )
+    next_action = _next_onboarding_action(blockers, recent_tasks)
+    return DeviceOnboardingSummary.model_validate(
+        {
+            "connection": _step_summary(
+                connection_task,
+                fallback_status="ready" if has_connection and has_credential else "blocked",
+            ),
+            "discovery": _step_summary(
+                discovery_task,
+                fallback_status="succeeded" if discovery_ok else "not_started",
+            ),
+            "baseline": _step_summary(
+                snapshot_task,
+                fallback_status="succeeded" if baseline_ok else "not_started",
+            ),
+            "baseline_snapshot": (
+                ConfigSnapshotSummaryRead.model_validate(last_snapshot) if last_snapshot else None
+            ),
+            "ready_for_change": ready_for_change,
+            "blockers": blockers,
+            "next_action": next_action,
+        }
+    )
+
+
+def _latest_task(recent_tasks: list[TaskStatus], task_type: DeviceTaskType) -> TaskStatus | None:
+    for task in recent_tasks:
+        if task.task_type == task_type:
+            return task
+    return None
+
+
+def _step_summary(task: TaskStatus | None, *, fallback_status: str) -> dict[str, object]:
+    if task is None:
+        return {
+            "status": fallback_status,
+            "task_id": None,
+            "error_code": None,
+            "error_message": None,
+            "completed_at": None,
+        }
+    return {
+        "status": task.status,
+        "task_id": task.task_id,
+        "error_code": task.error_code,
+        "error_message": task.error_message,
+        "completed_at": task.completed_at,
+    }
+
+
+def _next_onboarding_action(blockers: list[str], recent_tasks: list[TaskStatus]) -> str | None:
+    active_statuses = (DeviceTaskStatus.QUEUED, DeviceTaskStatus.RUNNING)
+    if any(task.status in active_statuses for task in recent_tasks):
+        return "wait_for_running_task"
+    if "connection_config_missing" in blockers or "credential_unavailable" in blockers:
+        return "update_connection"
+    if "connection_test_required" in blockers:
+        return "run_connection_test"
+    if "capability_discovery_required" in blockers:
+        return "run_capability_discovery"
+    if "baseline_snapshot_required" in blockers:
+        return "collect_baseline_snapshot"
+    return "submit_change"

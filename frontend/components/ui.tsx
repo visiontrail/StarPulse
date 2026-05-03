@@ -26,11 +26,15 @@ export function Button({
 
 export function StatusBadge({ status }: { status: string }) {
   const tone =
-    status === "succeeded" || status === "online" || status === "ready"
+    status === "succeeded" || status === "online" || status === "ready" || status === "passed"
       ? "border-ok/25 bg-ok/10 text-ok"
-      : status === "failed" || status === "offline" || status === "error"
+      : status === "failed" ||
+          status === "offline" ||
+          status === "error" ||
+          status === "blocked" ||
+          status === "verification_failed"
         ? "border-error/25 bg-error/10 text-error"
-        : status === "running" || status === "testing"
+        : status === "running" || status === "testing" || status === "verifying" || status === "queued"
           ? "border-info/25 bg-info/10 text-info"
           : "border-warn/25 bg-warn/10 text-warn";
   return (

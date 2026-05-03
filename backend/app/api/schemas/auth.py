@@ -182,6 +182,65 @@ class ChangeRequestDirectExecuteRequest(BaseModel):
     reason: str = Field(min_length=1)
 
 
+class SnapshotReferenceRead(BaseModel):
+    id: int
+    datastore: str
+    content_digest: str
+    collected_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChangePayloadSummary(BaseModel):
+    digest: str
+    length: int
+    line_count: int
+    is_empty: bool = False
+
+
+class ChangeRiskSummary(BaseModel):
+    device_id: int
+    datastore: str
+    risk_level: str
+    baseline_snapshot_id: int | None = None
+    baseline_digest: str | None = None
+    payload: ChangePayloadSummary | None = None
+    blockers: list[str] = Field(default_factory=list)
+    comparison: dict[str, object] = Field(default_factory=dict)
+
+
+class ChangePreflightRequest(BaseModel):
+    device_id: int
+    datastore: str
+    change_summary: str | None = None
+    change_ref: str | None = None
+    config_body: str | None = Field(default=None, min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class ChangePreflightResponse(BaseModel):
+    status: str
+    passed: bool
+    device_id: int
+    datastore: str
+    generated_at: datetime
+    baseline_snapshot: SnapshotReferenceRead | None = None
+    payload: ChangePayloadSummary | None = None
+    blockers: list[str] = Field(default_factory=list)
+    recommended_action: str | None = None
+    risk_summary: ChangeRiskSummary | None = None
+
+
+class ChangeVerificationSummary(BaseModel):
+    status: str
+    baseline_snapshot_id: int | None = None
+    verification_snapshot_id: int | None = None
+    verified_at: datetime | None = None
+    comparison: dict[str, object] = Field(default_factory=dict)
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 class ChangeRequestRead(BaseModel):
     id: int
     device_id: int
@@ -197,6 +256,18 @@ class ChangeRequestRead(BaseModel):
     direct_execute: bool
     direct_execute_reason: str | None = None
     execution_task_id: str | None = None
+    baseline_snapshot_id: int | None = None
+    baseline_snapshot: SnapshotReferenceRead | None = None
+    preflight_status: str | None = None
+    preflight_summary: dict[str, object] | None = None
+    risk_summary: dict[str, object] | None = None
+    preflight_generated_at: datetime | None = None
+    verification_status: str | None = None
+    verification_snapshot_id: int | None = None
+    verification_snapshot: SnapshotReferenceRead | None = None
+    verification_summary: dict[str, object] | None = None
+    executed_at: datetime | None = None
+    verified_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

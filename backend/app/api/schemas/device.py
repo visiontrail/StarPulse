@@ -35,6 +35,24 @@ class DeviceDiscoveryRead(BaseModel):
     summary: dict[str, object]
 
 
+class OnboardingStepSummary(BaseModel):
+    status: str
+    task_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    completed_at: datetime | None = None
+
+
+class DeviceOnboardingSummary(BaseModel):
+    connection: OnboardingStepSummary
+    discovery: OnboardingStepSummary
+    baseline: OnboardingStepSummary
+    baseline_snapshot: ConfigSnapshotSummaryRead | None = None
+    ready_for_change: bool
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str | None = None
+
+
 class DeviceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     serial_number: str | None = Field(default=None, max_length=255)
@@ -59,6 +77,7 @@ class DeviceRead(BaseModel):
     last_discovery: DeviceDiscoveryRead | None = None
     last_config_snapshot: ConfigSnapshotSummaryRead | None = None
     recent_tasks: list[dict[str, object]] = Field(default_factory=list)
+    onboarding_summary: DeviceOnboardingSummary | None = None
 
 
 class DeviceProfileRead(DeviceRead):

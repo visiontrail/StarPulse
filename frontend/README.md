@@ -1,6 +1,6 @@
 # Star-Pulse Operations Console
 
-Ground management operations console with authentication, RBAC, change control, and audit log views.
+Ground management operations console with authentication, RBAC, device onboarding, contextual change control, preflight risk review, execution verification, and audit log views.
 
 ## Local Development
 
@@ -28,6 +28,15 @@ STAR_PULSE_CORS_ALLOWED_ORIGINS='["http://localhost:3000"]'
 4. On access token expiry (HTTP 401), the client automatically calls refresh once and retries. If refresh fails, the session is cleared and the login view is shown.
 5. Logout calls `POST /api/v1/auth/logout`, clears the cookie, and returns to the login view.
 
+### Onboarding and Preflight Flow
+
+1. Users with `device:manage` can add a device from the device list.
+2. Users with `device:collect` can run connection test, capability discovery, and baseline snapshot steps from the selected device profile.
+3. The profile shows onboarding readiness, blocker codes, latest baseline snapshot, and the next action returned by the backend.
+4. Normal change submission is contextual from a device profile or snapshot row; the console no longer offers a free-standing manual Device ID submit form.
+5. Submit and direct-execute forms first call backend preflight and show baseline, payload, risk, and blockers before sending the final request.
+6. Change cards show submitter, approver, preflight/risk context, execution task, verification state, and safe post-change summary fields.
+
 ### CORS Configuration
 
 When the frontend and backend run on different origins (common in development), ensure:
@@ -49,3 +58,4 @@ npm run build
 - Configuration change summaries are shown by reference/summary, never as uncontrolled full config bodies.
 - Sensitive fields are not cached in localStorage or sessionStorage.
 - Permission-gated actions are hidden or disabled when the current user lacks the required permission.
+- Preflight and verification UI uses backend summaries and blocker/error codes instead of rendering raw config bodies.

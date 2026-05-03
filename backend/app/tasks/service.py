@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.common.redaction import redact_sensitive
 from app.devices.constants import DeviceTaskStatus, DeviceTaskType
+from app.devices.repository import DeviceRepository
 from app.storage.models import TaskStatus
 from app.tasks.jobs import (
     run_capability_discovery,
@@ -38,14 +39,32 @@ class TaskService:
         sample_health.delay(task_id, payload)
         return task_status
 
-    def submit_connection_test(self, device_id: int) -> TaskStatus:
-        task_status = self._create_device_task(DeviceTaskType.CONNECTION_TEST, device_id)
+    def submit_connection_test(
+        self, device_id: int, actor_user_id: int | None = None
+    ) -> TaskStatus:
+        active = self._active_device_task(DeviceTaskType.CONNECTION_TEST, device_id)
+        if active is not None:
+            return active
+        task_status = self._create_device_task(
+            DeviceTaskType.CONNECTION_TEST,
+            device_id,
+            actor_user_id=actor_user_id,
+        )
         run_connection_test.delay(task_status.task_id)
         self._log_dispatch(task_status)
         return task_status
 
-    def submit_capability_discovery(self, device_id: int) -> TaskStatus:
-        task_status = self._create_device_task(DeviceTaskType.CAPABILITY_DISCOVERY, device_id)
+    def submit_capability_discovery(
+        self, device_id: int, actor_user_id: int | None = None
+    ) -> TaskStatus:
+        active = self._active_device_task(DeviceTaskType.CAPABILITY_DISCOVERY, device_id)
+        if active is not None:
+            return active
+        task_status = self._create_device_task(
+            DeviceTaskType.CAPABILITY_DISCOVERY,
+            device_id,
+            actor_user_id=actor_user_id,
+        )
         run_capability_discovery.delay(task_status.task_id)
         self._log_dispatch(task_status)
         return task_status
@@ -56,6 +75,13 @@ class TaskService:
         datastore: str,
         actor_user_id: int | None = None,
     ) -> TaskStatus:
+        active = self._active_device_task(
+            DeviceTaskType.CONFIG_SNAPSHOT,
+            device_id,
+            datastore=datastore,
+        )
+        if active is not None:
+            return active
         task_status = self._create_device_task(
             DeviceTaskType.CONFIG_SNAPSHOT,
             device_id,
@@ -111,6 +137,18 @@ class TaskService:
         self.session.commit()
         self.session.refresh(task_status)
         return task_status
+
+    def _active_device_task(
+        self,
+        task_type: DeviceTaskType,
+        device_id: int,
+        datastore: str | None = None,
+    ) -> TaskStatus | None:
+        return DeviceRepository(self.session).find_active_device_task(
+            device_id=device_id,
+            task_type=task_type,
+            datastore=datastore,
+        )
 
     def _log_dispatch(self, task_status: TaskStatus) -> None:
         logger.info(

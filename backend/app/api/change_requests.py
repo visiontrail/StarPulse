@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from app.api.schemas.auth import (
+    ChangePreflightRequest,
+    ChangePreflightResponse,
     ChangeRequestApproveRequest,
     ChangeRequestDirectExecuteRequest,
     ChangeRequestListResponse,
@@ -17,6 +19,7 @@ from app.auth.constants import (
 )
 from app.auth.dependencies import CurrentUserDep, SessionDep, require_permission
 from app.devices.change_requests import ChangeRequestError, ChangeRequestService
+from app.devices.preflight import ChangePreflightService
 
 router = APIRouter(prefix="/change-requests", tags=["change-requests"])
 
@@ -47,6 +50,29 @@ def submit_change_request(
     except ChangeRequestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return ChangeRequestRead.model_validate(cr)
+
+
+@router.post(
+    "/preflight",
+    response_model=ChangePreflightResponse,
+    dependencies=[require_permission(PERM_DEVICE_CHANGE_SUBMIT)],
+)
+def preview_change_preflight(
+    payload: ChangePreflightRequest,
+    request: Request,
+    session: SessionDep,
+    actor: CurrentUserDep,
+) -> ChangePreflightResponse:
+    preflight = ChangePreflightService(session).preview(
+        actor=actor,
+        device_id=payload.device_id,
+        datastore=payload.datastore,
+        config_body=payload.config_body,
+        reason=payload.reason,
+        ip_address=request.client.host if request.client else None,
+    )
+    session.commit()
+    return preflight
 
 
 @router.get(

@@ -8,7 +8,9 @@ from app.auth.audit import write_audit_event
 from app.auth.constants import AuditAction, AuditOutcome
 from app.auth.repositories import ChangeRequestRepository
 from app.common.time import utc_now
+from app.core.config import get_settings
 from app.devices.constants import SUPPORTED_CONFIG_DATASTORES
+from app.devices.preflight import ChangePreflightService
 from app.devices.repository import DeviceRepository
 from app.storage.models import DeviceConfigChangeRequest, User
 from app.tasks.service import TaskService
@@ -72,6 +74,14 @@ class ChangeRequestService:
             self.session.commit()
             raise ChangeRequestError("Device not found")
 
+        preflight = self._run_passing_preflight(
+            actor=actor,
+            device_id=device_id,
+            datastore=datastore,
+            config_body=config_body,
+            reason=reason,
+            ip_address=ip_address,
+        )
         cr = self._repo.create(
             device_id=device_id,
             datastore=datastore,
@@ -80,6 +90,7 @@ class ChangeRequestService:
             reason=reason,
             status="pending_approval",
             submitter_id=actor.id,
+            **_preflight_fields(preflight),
         )
         self._repo.create_payload(change_request_id=cr.id, config_body=config_body)
         write_audit_event(
@@ -94,6 +105,9 @@ class ChangeRequestService:
                 "datastore": datastore,
                 "change_summary": change_summary[:200],
                 "config_body_length": len(config_body),
+                "baseline_snapshot_id": cr.baseline_snapshot_id,
+                "preflight_status": cr.preflight_status,
+                "risk_summary": cr.risk_summary,
             },
             ip_address=ip_address,
         )
@@ -110,6 +124,7 @@ class ChangeRequestService:
         ip_address: str | None = None,
     ) -> DeviceConfigChangeRequest:
         cr = self._get_pending_or_raise(cr_id)
+        self._ensure_preflight_valid(cr, actor=actor, ip_address=ip_address)
         cr.status = "approved"
         cr.approver_id = actor.id
         cr.approval_note = approval_note
@@ -121,7 +136,11 @@ class ChangeRequestService:
             actor_user_id=actor.id,
             target_type="change_request",
             target_id=str(cr.id),
-            metadata={"approval_note": approval_note},
+            metadata={
+                "approval_note": approval_note,
+                "preflight_status": cr.preflight_status,
+                "risk_summary": cr.risk_summary,
+            },
             ip_address=ip_address,
         )
         task_status = TaskService(self.session).submit_config_change(
@@ -213,6 +232,14 @@ class ChangeRequestService:
             self.session.commit()
             raise ChangeRequestError("Device not found")
 
+        preflight = self._run_passing_preflight(
+            actor=actor,
+            device_id=device_id,
+            datastore=datastore,
+            config_body=config_body,
+            reason=reason,
+            ip_address=ip_address,
+        )
         cr = self._repo.create(
             device_id=device_id,
             datastore=datastore,
@@ -225,6 +252,7 @@ class ChangeRequestService:
             direct_execute=True,
             direct_execute_reason=reason,
             executor_id=actor.id,
+            **_preflight_fields(preflight),
         )
         self._repo.create_payload(change_request_id=cr.id, config_body=config_body)
         write_audit_event(
@@ -241,6 +269,9 @@ class ChangeRequestService:
                 "direct_execute_reason": reason[:200],
                 "direct_execute": True,
                 "config_body_length": len(config_body),
+                "baseline_snapshot_id": cr.baseline_snapshot_id,
+                "preflight_status": cr.preflight_status,
+                "risk_summary": cr.risk_summary,
             },
             ip_address=ip_address,
         )
@@ -266,6 +297,68 @@ class ChangeRequestService:
 
     def get_request(self, cr_id: int) -> DeviceConfigChangeRequest | None:
         return self._repo.get_by_id(cr_id)
+
+    def _run_passing_preflight(
+        self,
+        *,
+        actor: User,
+        device_id: int,
+        datastore: str,
+        config_body: str,
+        reason: str,
+        ip_address: str | None,
+    ):
+        preflight = ChangePreflightService(self.session).preview(
+            actor=actor,
+            device_id=device_id,
+            datastore=datastore,
+            config_body=config_body,
+            reason=reason,
+            ip_address=ip_address,
+        )
+        if not preflight.passed:
+            self.session.commit()
+            raise ChangeRequestError(
+                "Change preflight failed: " + ", ".join(preflight.blockers)
+            )
+        return preflight
+
+    def _ensure_preflight_valid(
+        self,
+        cr: DeviceConfigChangeRequest,
+        *,
+        actor: User,
+        ip_address: str | None,
+    ) -> None:
+        if cr.preflight_status != "passed" or cr.baseline_snapshot_id is None:
+            raise ChangeRequestError("Change request does not have a valid preflight")
+
+        baseline = DeviceRepository(self.session).get_latest_successful_snapshot(
+            device_id=cr.device_id, datastore=cr.datastore
+        )
+        if baseline is None or baseline.id != cr.baseline_snapshot_id:
+            raise ChangeRequestError("Change request preflight baseline must be refreshed")
+
+        age_seconds = (utc_now() - _aware_datetime(baseline.collected_at)).total_seconds()
+        freshness_seconds = get_settings().baseline_snapshot_freshness_minutes * 60
+        if age_seconds > freshness_seconds:
+            write_audit_event(
+                session=self.session,
+                action=AuditAction.CHANGE_PREFLIGHT_STALE_BASELINE,
+                outcome=AuditOutcome.FAILURE,
+                actor_user_id=actor.id,
+                target_type="change_request",
+                target_id=str(cr.id),
+                metadata={
+                    "device_id": cr.device_id,
+                    "datastore": cr.datastore,
+                    "baseline_snapshot_id": cr.baseline_snapshot_id,
+                    "preflight_status": cr.preflight_status,
+                },
+                ip_address=ip_address,
+            )
+            self.session.commit()
+            raise ChangeRequestError("Change request preflight baseline is stale")
 
     def _get_pending_or_raise(self, cr_id: int) -> DeviceConfigChangeRequest:
         cr = self._repo.get_by_id(cr_id)
@@ -297,3 +390,27 @@ class ChangeRequestService:
             self.session.commit()
             raise ChangeRequestError("Config body is required for executable config changes")
         return config_body
+
+
+def _preflight_fields(preflight) -> dict[str, object]:
+    return {
+        "baseline_snapshot_id": (
+            preflight.baseline_snapshot.id if preflight.baseline_snapshot else None
+        ),
+        "preflight_status": preflight.status,
+        "preflight_summary": preflight.model_dump(mode="json", exclude={"risk_summary"}),
+        "risk_summary": (
+            preflight.risk_summary.model_dump(mode="json")
+            if preflight.risk_summary is not None
+            else None
+        ),
+        "preflight_generated_at": preflight.generated_at,
+    }
+
+
+def _aware_datetime(value):
+    from datetime import UTC
+
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value

@@ -1,8 +1,10 @@
 import type {
   AuditLogListResponse,
+  ChangePreflightResponse,
   ChangeRequestListResponse,
   ChangeRequestRead,
   CurrentUser,
+  DeviceConnectionCreate,
   Device,
   DeviceProfile,
   LoginResponse,
@@ -15,6 +17,29 @@ import type {
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000/api/v1";
+
+export class ApiError extends Error {
+  status: number;
+  blockers: string[];
+  detail: unknown;
+
+  constructor(message: string, status: number, detail: unknown, blockers: string[] = []) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+    this.blockers = blockers;
+  }
+}
+
+export function formatApiError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.blockers.length > 0) return error.blockers.join(", ");
+    return error.message;
+  }
+  if (error instanceof Error) return error.message;
+  return "Request failed";
+}
 
 // ── Session state (in-memory access token) ────────────────────────────────
 
@@ -71,13 +96,54 @@ async function request<T>(
   }
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed with ${response.status}`);
+    const detail = await readErrorDetail(response);
+    throw new ApiError(
+      errorMessage(detail) || `Request failed with ${response.status}`,
+      response.status,
+      detail,
+      errorBlockers(detail)
+    );
   }
   if (response.status === 204) {
     return undefined as T;
   }
   return response.json() as Promise<T>;
+}
+
+async function readErrorDetail(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+function errorMessage(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && "detail" in detail) {
+    const value = (detail as { detail?: unknown }).detail;
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+function errorBlockers(detail: unknown): string[] {
+  const message = errorMessage(detail);
+  const blockers =
+    detail && typeof detail === "object" && "blockers" in detail
+      ? (detail as { blockers?: unknown }).blockers
+      : null;
+  if (Array.isArray(blockers)) return blockers.filter((item) => typeof item === "string");
+  if (message?.startsWith("Change preflight failed: ")) {
+    return message
+      .replace("Change preflight failed: ", "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
 }
 
 async function tryRefresh(): Promise<boolean> {
@@ -167,7 +233,23 @@ export const api = {
   getMe,
 
   listDevices: () => request<Device[]>("/devices"),
+  createDevice: (payload: {
+    name: string;
+    serial_number?: string | null;
+    group?: string | null;
+    status?: string;
+    metadata?: Record<string, unknown>;
+    connection?: DeviceConnectionCreate | null;
+  }) =>
+    request<Device>("/devices", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   getProfile: (deviceId: number) => request<DeviceProfile>(`/devices/${deviceId}/profile`),
+  submitConnectionTest: (deviceId: number) =>
+    request<TaskRead>(`/devices/${deviceId}/connection-test`, { method: "POST" }),
+  submitCapabilityDiscovery: (deviceId: number) =>
+    request<TaskRead>(`/devices/${deviceId}/capability-discovery`, { method: "POST" }),
   listSnapshots: (deviceId: number, limit = 20) =>
     request<SnapshotListResponse>(`/devices/${deviceId}/config-snapshots?limit=${limit}`),
   collectSnapshot: (deviceId: number, datastore: string) =>
@@ -212,10 +294,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  previewChangePreflight: (payload: {
+    device_id: number;
+    datastore: string;
+    change_summary?: string;
+    change_ref?: string;
+    config_body?: string;
+    reason: string;
+  }) =>
+    request<ChangePreflightResponse>("/change-requests/preflight", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   listChangeRequests: (status?: string) =>
     request<ChangeRequestListResponse>(
       `/change-requests${status ? `?status=${status}` : ""}`
     ),
+  getChangeRequest: (id: number) => request<ChangeRequestRead>(`/change-requests/${id}`),
   approveChangeRequest: (id: number, note?: string) =>
     request<ChangeRequestRead>(`/change-requests/${id}/approve`, {
       method: "POST",

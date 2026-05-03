@@ -72,9 +72,62 @@ export type AuditLogListResponse = {
 export type ChangeRequestStatus =
   | "pending_approval"
   | "approved"
+  | "queued"
+  | "running"
+  | "verifying"
   | "rejected"
   | "executed"
+  | "verification_failed"
+  | "failed"
   | string;
+
+export type SnapshotReference = {
+  id: number;
+  datastore: string;
+  content_digest: string;
+  collected_at: string;
+};
+
+export type ChangePayloadSummary = {
+  digest: string;
+  length: number;
+  line_count: number;
+  is_empty: boolean;
+};
+
+export type ChangeRiskSummary = {
+  device_id: number;
+  datastore: string;
+  risk_level: string;
+  baseline_snapshot_id: number | null;
+  baseline_digest: string | null;
+  payload: ChangePayloadSummary | null;
+  blockers: string[];
+  comparison: Record<string, unknown>;
+};
+
+export type ChangePreflightResponse = {
+  status: string;
+  passed: boolean;
+  device_id: number;
+  datastore: string;
+  generated_at: string;
+  baseline_snapshot: SnapshotReference | null;
+  payload: ChangePayloadSummary | null;
+  blockers: string[];
+  recommended_action: string | null;
+  risk_summary: ChangeRiskSummary | null;
+};
+
+export type ChangeVerificationSummary = {
+  status: string;
+  baseline_snapshot_id: number | null;
+  verification_snapshot_id: number | null;
+  verified_at: string | null;
+  comparison: Record<string, unknown>;
+  error_code: string | null;
+  error_message: string | null;
+};
 
 export type ChangeRequestRead = {
   id: number;
@@ -91,6 +144,18 @@ export type ChangeRequestRead = {
   direct_execute: boolean;
   direct_execute_reason: string | null;
   execution_task_id: string | null;
+  baseline_snapshot_id: number | null;
+  baseline_snapshot: SnapshotReference | null;
+  preflight_status: string | null;
+  preflight_summary: Record<string, unknown> | null;
+  risk_summary: ChangeRiskSummary | Record<string, unknown> | null;
+  preflight_generated_at: string | null;
+  verification_status: string | null;
+  verification_snapshot_id: number | null;
+  verification_snapshot: SnapshotReference | null;
+  verification_summary: ChangeVerificationSummary | Record<string, unknown> | null;
+  executed_at: string | null;
+  verified_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -129,6 +194,14 @@ export type DeviceConnection = {
   has_credential: boolean;
 };
 
+export type DeviceConnectionCreate = {
+  protocol?: string;
+  host: string;
+  port?: number;
+  username: string;
+  password?: string | null;
+};
+
 export type DeviceDiscovery = {
   source_task_id: string;
   capabilities: string[];
@@ -159,6 +232,24 @@ export type TaskSummary = {
   updated_at: string;
 };
 
+export type OnboardingStepSummary = {
+  status: string;
+  task_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  completed_at: string | null;
+};
+
+export type DeviceOnboardingSummary = {
+  connection: OnboardingStepSummary;
+  discovery: OnboardingStepSummary;
+  baseline: OnboardingStepSummary;
+  baseline_snapshot: ConfigSnapshot | null;
+  ready_for_change: boolean;
+  blockers: string[];
+  next_action: string | null;
+};
+
 export type Device = {
   id: number;
   name: string;
@@ -172,6 +263,7 @@ export type Device = {
   last_discovery: DeviceDiscovery | null;
   last_config_snapshot: ConfigSnapshot | null;
   recent_tasks: TaskSummary[];
+  onboarding_summary: DeviceOnboardingSummary | null;
 };
 
 export type DeviceProfile = Device & {

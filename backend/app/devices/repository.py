@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.devices.constants import DeviceTaskStatus
 from app.storage.models import (
     Device,
     DeviceConfigSnapshot,
@@ -153,6 +154,11 @@ class DeviceRepository(Repository[Device]):
             ).limit(1)
         )
 
+    def get_latest_successful_snapshot(
+        self, *, device_id: int, datastore: str
+    ) -> DeviceConfigSnapshot | None:
+        return self.get_last_config_snapshot(device_id=device_id, datastore=datastore)
+
     def list_config_snapshots(
         self, *, device_id: int, limit: int = 20, offset: int = 0
     ) -> list[DeviceConfigSnapshot]:
@@ -178,6 +184,32 @@ class DeviceRepository(Repository[Device]):
                 .limit(safe_limit)
             ).all()
         )
+
+    def find_active_device_task(
+        self,
+        *,
+        device_id: int,
+        task_type: str,
+        datastore: str | None = None,
+    ) -> TaskStatus | None:
+        active_statuses = (str(DeviceTaskStatus.QUEUED), str(DeviceTaskStatus.RUNNING))
+        tasks = list(
+            self.session.scalars(
+                select(TaskStatus)
+                .where(
+                    TaskStatus.device_id == device_id,
+                    TaskStatus.task_type == task_type,
+                    TaskStatus.status.in_(active_statuses),
+                )
+                .order_by(desc(TaskStatus.created_at), desc(TaskStatus.id))
+            )
+        )
+        if datastore is None:
+            return tasks[0] if tasks else None
+        for task in tasks:
+            if task.metadata_json.get("datastore") == datastore:
+                return task
+        return None
 
     def update_task_status(
         self,

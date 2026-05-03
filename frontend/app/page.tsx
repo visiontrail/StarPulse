@@ -10,6 +10,8 @@ import {
   HardDrive,
   KeyRound,
   ListRestart,
+  Plus,
+  PlayCircle,
   RefreshCw,
   Router,
   Send,
@@ -23,14 +25,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { LoginView, SessionHeader } from "@/components/auth";
 import { Button, DatastoreSelect, EmptyState, FieldLabel, StatusBadge } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, formatApiError } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import type {
   AuditLogRead,
+  ChangePreflightResponse,
   ChangeRequestRead,
   ConfigSnapshot,
   Device,
   DeviceProfile,
+  OnboardingStepSummary,
   Permission,
   Role,
   SnapshotListResponse,
@@ -133,6 +137,7 @@ function DevicesTab() {
   const [snapshots, setSnapshots] = useState<ConfigSnapshot[]>([]);
   const [datastore, setDatastore] = useState("running");
   const [lastTask, setLastTask] = useState<TaskRead | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
   const [devicesState, setDevicesState] = useState<LoadState>("idle");
   const [profileState, setProfileState] = useState<LoadState>("idle");
   const [submitState, setSubmitState] = useState<LoadState>("idle");
@@ -188,7 +193,9 @@ function DevicesTab() {
   );
 
   const canCollect = hasPermission(PERM.DEVICE_COLLECT);
+  const canManage = hasPermission(PERM.DEVICE_MANAGE);
   const canSubmitChange = hasPermission(PERM.DEVICE_CHANGE_SUBMIT);
+  const readyForChange = Boolean(profile?.onboarding_summary?.ready_for_change);
 
   async function submitSnapshot() {
     if (!selectedDeviceId || configTaskRunning || !canCollect) return;
@@ -205,21 +212,61 @@ function DevicesTab() {
     }
   }
 
+  async function runOnboardingTask(step: "connection" | "discovery" | "baseline") {
+    if (!selectedDeviceId) return;
+    setSubmitState("loading");
+    setError(null);
+    try {
+      const task =
+        step === "connection"
+          ? await api.submitConnectionTest(selectedDeviceId)
+          : step === "discovery"
+            ? await api.submitCapabilityDiscovery(selectedDeviceId)
+            : await api.collectSnapshot(selectedDeviceId, datastore);
+      setLastTask(task);
+      await loadProfile(selectedDeviceId);
+      setSubmitState("loaded");
+    } catch (e) {
+      setSubmitState("error");
+      setError(errorMessage(e));
+    }
+  }
+
   return (
     <div className="mx-auto grid max-w-[1440px] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
       <aside className="rounded border border-warm bg-canvas/95">
         <div className="flex h-16 items-center justify-between border-b border-warm px-4">
           <h2 className="text-xl font-semibold">Operations</h2>
-          <Button
-            aria-label="Refresh devices"
-            onClick={() => void loadDevices()}
-            busy={devicesState === "loading"}
-            className="h-9 w-9 px-0"
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden />
-          </Button>
+          <div className="flex items-center gap-2">
+            {canManage ? (
+              <Button
+                aria-label="Add device"
+                onClick={() => setShowCreate((value) => !value)}
+                className="h-9 w-9 px-0"
+              >
+                <Plus className="h-4 w-4" aria-hidden />
+              </Button>
+            ) : null}
+            <Button
+              aria-label="Refresh devices"
+              onClick={() => void loadDevices()}
+              busy={devicesState === "loading"}
+              className="h-9 w-9 px-0"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden />
+            </Button>
+          </div>
         </div>
         <div className="p-3">
+          {showCreate && canManage ? (
+            <CreateDeviceForm
+              onSuccess={async (deviceId) => {
+                setShowCreate(false);
+                await loadDevices();
+                setSelectedDeviceId(deviceId);
+              }}
+            />
+          ) : null}
           {devicesState === "loading" ? <DeviceListSkeleton /> : null}
           {devicesState === "loaded" && devices.length === 0 ? (
             <EmptyState icon={<Router className="h-6 w-6" />} title="No devices registered" />
@@ -297,9 +344,19 @@ function DevicesTab() {
             <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
               <div className="space-y-4">
                 <ProfileGrid profile={profile} loading={profileState === "loading"} />
-                <SnapshotTable snapshots={snapshots} />
+                <SnapshotTable
+                  snapshots={snapshots}
+                  canSubmitChange={canSubmitChange}
+                  onStartChange={(snapshot) => setDatastore(snapshot.datastore)}
+                />
               </div>
               <div className="space-y-4">
+                <OnboardingPanel
+                  profile={profile}
+                  canCollect={canCollect}
+                  busy={submitState === "loading"}
+                  onRun={(step) => void runOnboardingTask(step)}
+                />
                 <ReadOnlyPanel
                   profile={profile}
                   lastTask={lastTask}
@@ -308,8 +365,15 @@ function DevicesTab() {
                 {canSubmitChange ? (
                   <ChangeRequestForm
                     initialDeviceId={selectedDevice.id}
+                    initialDatastore={datastore}
                     onSuccess={() => undefined}
                     compact
+                    disabledReason={
+                      readyForChange
+                        ? null
+                        : profile?.onboarding_summary?.blockers.join(", ") ||
+                          "device onboarding is incomplete"
+                    }
                   />
                 ) : null}
                 <RecentTasks tasks={profile?.recent_tasks ?? []} />
@@ -382,7 +446,13 @@ function ChangesTab() {
 
       {error ? <ErrorPanel message={error} onRetry={() => void loadChanges()} /> : null}
 
-      {canSubmit && <ChangeRequestForm onSuccess={() => void loadChanges()} />}
+      {canSubmit ? (
+        <InfoPanel icon={<Router />} title="Contextual Submission">
+          <p className="text-sm text-muted">
+            Open a device profile or snapshot to submit a normal change request.
+          </p>
+        </InfoPanel>
+      ) : null}
       {canExecute && <DirectExecuteForm onSuccess={() => void loadChanges()} />}
 
       {changes.length === 0 && !loading ? (
@@ -409,6 +479,18 @@ function ChangesTab() {
                   {cr.submitter?.display_name ?? "unknown"}
                 </p>
                 <p className="mt-0.5 text-xs text-muted">Reason: {cr.reason}</p>
+                <div className="mt-2 grid gap-2 text-xs text-muted sm:grid-cols-3">
+                  <Metric label="Approver" value={cr.approver?.display_name ?? "-"} />
+                  <Metric label="Execution" value={cr.execution_task_id ?? "-"} />
+                  <Metric label="Verification" value={cr.verification_status ?? "-"} />
+                </div>
+                <PreflightSummary preflight={changePreflightFromRequest(cr)} compact />
+                {cr.verification_summary ? (
+                  <p className="mt-2 text-xs text-muted">
+                    {String(cr.verification_summary.error_message ?? "") ||
+                      `Post-change snapshot ${cr.verification_snapshot_id ?? "-"}`}
+                  </p>
+                ) : null}
               </div>
               {cr.status === "pending_approval" && canApprove && (
                 <div className="flex gap-2">
@@ -437,18 +519,23 @@ function ChangesTab() {
 function ChangeRequestForm({
   onSuccess,
   initialDeviceId,
+  initialDatastore,
+  disabledReason,
   compact = false
 }: {
   onSuccess: () => void;
   initialDeviceId?: number;
+  initialDatastore?: string;
+  disabledReason?: string | null;
   compact?: boolean;
 }) {
   const [deviceId, setDeviceId] = useState(initialDeviceId ? String(initialDeviceId) : "");
-  const [datastore, setDatastore] = useState("running");
+  const [datastore, setDatastore] = useState(initialDatastore ?? "running");
   const [summary, setSummary] = useState("");
   const [changeRef, setChangeRef] = useState("");
   const [configBody, setConfigBody] = useState("");
   const [reason, setReason] = useState("");
+  const [preflight, setPreflight] = useState<ChangePreflightResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -458,11 +545,44 @@ function ChangeRequestForm({
     }
   }, [initialDeviceId]);
 
+  useEffect(() => {
+    if (initialDatastore) setDatastore(initialDatastore);
+  }, [initialDatastore]);
+
+  useEffect(() => {
+    setPreflight(null);
+  }, [deviceId, datastore, summary, changeRef, configBody, reason]);
+
+  async function preview() {
+    const result = await api.previewChangePreflight({
+      device_id: Number(deviceId),
+      datastore,
+      change_summary: summary,
+      change_ref: changeRef.trim() || undefined,
+      config_body: configBody,
+      reason
+    });
+    setPreflight(result);
+    if (!result.passed) {
+      throw new Error(result.blockers.join(", ") || "Preflight failed");
+    }
+    return result;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (disabledReason) {
+      setError(disabledReason);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
+      if (!preflight?.passed) {
+        await preview();
+        setLoading(false);
+        return;
+      }
       await api.submitChangeRequest({
         device_id: Number(deviceId),
         datastore,
@@ -476,6 +596,7 @@ function ChangeRequestForm({
       setChangeRef("");
       setConfigBody("");
       setReason("");
+      setPreflight(null);
       onSuccess();
     } catch (e) {
       setError(errorMessage(e));
@@ -491,18 +612,9 @@ function ChangeRequestForm({
       </h3>
       <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
         <div className={cn("grid gap-3", compact ? "" : "sm:grid-cols-2")}>
-          <div>
-            <FieldLabel>Device ID</FieldLabel>
-            <input
-              type="number"
-              required
-              min={1}
-              value={deviceId}
-              disabled={Boolean(initialDeviceId)}
-              onChange={(e) => setDeviceId(e.target.value)}
-              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm disabled:text-muted"
-            />
-          </div>
+          {initialDeviceId ? (
+            <Metric label="Device" value={`#${initialDeviceId}`} />
+          ) : null}
           <div>
             <FieldLabel>Datastore</FieldLabel>
             <DatastoreSelect value={datastore} onValueChange={setDatastore} />
@@ -549,9 +661,12 @@ function ChangeRequestForm({
             className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
           />
         </div>
+        {preflight ? <PreflightSummary preflight={preflight} /> : null}
+        {disabledReason ? <p className="text-xs text-warn">{disabledReason}</p> : null}
         {error ? <p className="text-xs text-error">{error}</p> : null}
-        <Button type="submit" busy={loading}>
-          <Send className="h-4 w-4" /> Submit
+        <Button type="submit" busy={loading} disabled={Boolean(disabledReason)}>
+          <Send className="h-4 w-4" />
+          {preflight?.passed ? "Submit" : "Preview"}
         </Button>
       </form>
     </div>
@@ -565,8 +680,13 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
   const [summary, setSummary] = useState("");
   const [configBody, setConfigBody] = useState("");
   const [reason, setReason] = useState("");
+  const [preflight, setPreflight] = useState<ChangePreflightResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPreflight(null);
+  }, [deviceId, datastore, summary, configBody, reason]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -574,6 +694,19 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
     setLoading(true);
     setError(null);
     try {
+      if (!preflight?.passed) {
+        const result = await api.previewChangePreflight({
+          device_id: Number(deviceId),
+          datastore,
+          change_summary: summary,
+          config_body: configBody,
+          reason
+        });
+        setPreflight(result);
+        if (!result.passed) throw new Error(result.blockers.join(", ") || "Preflight failed");
+        setLoading(false);
+        return;
+      }
       await api.directExecute({
         device_id: Number(deviceId),
         datastore,
@@ -583,6 +716,7 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
       });
       setOpen(false);
       setSummary(""); setConfigBody(""); setReason(""); setDeviceId("");
+      setPreflight(null);
       onSuccess();
     } catch (e) {
       setError(errorMessage(e));
@@ -649,9 +783,12 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
             className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
           />
         </div>
+        {preflight ? <PreflightSummary preflight={preflight} /> : null}
         {error ? <p className="text-xs text-error">{error}</p> : null}
         <div className="flex gap-2">
-          <Button type="submit" busy={loading}>Execute</Button>
+          <Button type="submit" busy={loading}>
+            {preflight?.passed ? "Execute" : "Preview"}
+          </Button>
           <Button type="button" onClick={() => setOpen(false)} className="bg-paper">Cancel</Button>
         </div>
       </form>
@@ -1075,6 +1212,207 @@ function AuditTab() {
 
 // ── Shared sub-components ──────────────────────────────────────────────────
 
+function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("830");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const device = await api.createDevice({
+        name,
+        connection: {
+          host,
+          port: Number(port),
+          username,
+          password
+        }
+      });
+      setName("");
+      setHost("");
+      setPort("830");
+      setUsername("");
+      setPassword("");
+      await onSuccess(device.id);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => void handleSubmit(e)} className="mb-3 rounded border border-warm bg-paper p-3">
+      <div className="grid gap-2">
+        <FieldLabel>New Device</FieldLabel>
+        <input
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="name"
+          className="w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
+        />
+        <div className="grid grid-cols-[1fr_76px] gap-2">
+          <input
+            required
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            placeholder="host"
+            className="min-w-0 rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
+          />
+          <input
+            required
+            type="number"
+            min={1}
+            max={65535}
+            value={port}
+            onChange={(e) => setPort(e.target.value)}
+            className="rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
+          />
+        </div>
+        <input
+          required
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="username"
+          className="w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
+        />
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="password"
+          className="w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
+        />
+        {error ? <p className="text-xs text-error">{error}</p> : null}
+        <Button type="submit" busy={loading} className="w-full">
+          <Plus className="h-4 w-4" /> Add
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function OnboardingPanel({
+  profile,
+  canCollect,
+  busy,
+  onRun
+}: {
+  profile: DeviceProfile | null;
+  canCollect: boolean;
+  busy: boolean;
+  onRun: (step: "connection" | "discovery" | "baseline") => void;
+}) {
+  const summary = profile?.onboarding_summary;
+  return (
+    <InfoPanel icon={<PlayCircle />} title="Onboarding">
+      {summary ? (
+        <div className="space-y-3">
+          <div className="grid gap-2">
+            <OnboardingStep label="Connection" step={summary.connection} />
+            <OnboardingStep label="Discovery" step={summary.discovery} />
+            <OnboardingStep label="Baseline" step={summary.baseline} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => onRun("connection")}
+              disabled={!canCollect || busy}
+              busy={busy && summary.next_action === "run_connection_test"}
+              className="h-8 px-2 text-xs"
+            >
+              Test
+            </Button>
+            <Button
+              onClick={() => onRun("discovery")}
+              disabled={!canCollect || busy}
+              busy={busy && summary.next_action === "run_capability_discovery"}
+              className="h-8 px-2 text-xs"
+            >
+              Discover
+            </Button>
+            <Button
+              onClick={() => onRun("baseline")}
+              disabled={!canCollect || busy}
+              busy={busy && summary.next_action === "collect_baseline_snapshot"}
+              className="h-8 px-2 text-xs"
+            >
+              Baseline
+            </Button>
+          </div>
+          <StatusBadge status={summary.ready_for_change ? "ready" : "blocked"} />
+          {summary.blockers.length > 0 ? (
+            <p className="text-xs text-muted">{summary.blockers.join(", ")}</p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-sm text-muted">Profile unavailable</p>
+      )}
+    </InfoPanel>
+  );
+}
+
+function OnboardingStep({ label, step }: { label: string; step: OnboardingStepSummary }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded border border-warm bg-paper px-2 py-1.5">
+      <span className="text-xs font-medium">{label}</span>
+      <StatusBadge status={step.status} />
+    </div>
+  );
+}
+
+function PreflightSummary({
+  preflight,
+  compact = false
+}: {
+  preflight: ChangePreflightResponse | null;
+  compact?: boolean;
+}) {
+  if (!preflight) return null;
+  return (
+    <div className="rounded border border-warm bg-paper p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <FieldLabel>Preflight</FieldLabel>
+        <StatusBadge status={preflight.passed ? "passed" : "failed"} />
+      </div>
+      <div className={cn("mt-2 grid gap-2 text-xs", compact ? "" : "sm:grid-cols-2")}>
+        <Metric label="Baseline" value={preflight.baseline_snapshot?.id ?? "-"} />
+        <Metric label="Payload" value={preflight.payload ? `${preflight.payload.length} bytes` : "-"} />
+        <Metric label="Risk" value={preflight.risk_summary?.risk_level ?? "-"} />
+        <Metric label="Digest" value={digestShort(preflight.payload?.digest)} />
+      </div>
+      {preflight.blockers.length > 0 ? (
+        <p className="mt-2 text-xs text-error">{preflight.blockers.join(", ")}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function changePreflightFromRequest(cr: ChangeRequestRead): ChangePreflightResponse | null {
+  if (!cr.preflight_status) return null;
+  return {
+    status: cr.preflight_status,
+    passed: cr.preflight_status === "passed",
+    device_id: cr.device_id,
+    datastore: cr.datastore,
+    generated_at: cr.preflight_generated_at ?? cr.created_at,
+    baseline_snapshot: cr.baseline_snapshot,
+    payload: null,
+    blockers: Array.isArray(cr.preflight_summary?.blockers)
+      ? (cr.preflight_summary.blockers as string[])
+      : [],
+    recommended_action: null,
+    risk_summary: (cr.risk_summary as ChangePreflightResponse["risk_summary"]) ?? null
+  };
+}
+
 function DeviceListItem({
   device, active, onSelect
 }: { device: Device; active: boolean; onSelect: () => void }) {
@@ -1132,7 +1470,15 @@ function ProfileGrid({ profile, loading }: { profile: DeviceProfile | null; load
   );
 }
 
-function SnapshotTable({ snapshots }: { snapshots: ConfigSnapshot[] }) {
+function SnapshotTable({
+  snapshots,
+  canSubmitChange = false,
+  onStartChange
+}: {
+  snapshots: ConfigSnapshot[];
+  canSubmitChange?: boolean;
+  onStartChange?: (snapshot: ConfigSnapshot) => void;
+}) {
   return (
     <InfoPanel icon={<FileClock />} title="Snapshots">
       {snapshots.length === 0 ? (
@@ -1154,7 +1500,19 @@ function SnapshotTable({ snapshots }: { snapshots: ConfigSnapshot[] }) {
                   <td className="py-3 pr-3 font-mono text-xs">{s.datastore}</td>
                   <td className="py-3 pr-3 text-muted">{formatDate(s.collected_at)}</td>
                   <td className="py-3 pr-3 font-mono text-xs">{digestShort(s.content_digest)}</td>
-                  <td className="py-3 text-muted">{diffLabel(s.diff_summary)}</td>
+                  <td className="py-3 text-muted">
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{diffLabel(s.diff_summary)}</span>
+                      {canSubmitChange && onStartChange ? (
+                        <Button
+                          onClick={() => onStartChange(s)}
+                          className="h-8 px-2 text-xs"
+                        >
+                          <Send className="h-3.5 w-3.5" /> Change
+                        </Button>
+                      ) : null}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1318,5 +1676,5 @@ function formatDate(value: string) {
 }
 
 function errorMessage(caught: unknown) {
-  return caught instanceof Error ? caught.message : "Request failed";
+  return formatApiError(caught);
 }

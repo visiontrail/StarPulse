@@ -34,6 +34,7 @@ Important environment variables:
 - `STAR_PULSE_CELERY_TASK_ALWAYS_EAGER`
 - `STAR_PULSE_NETCONF_DEFAULT_TIMEOUT`
 - `STAR_PULSE_NETCONF_HOSTKEY_VERIFY`
+- `STAR_PULSE_BASELINE_SNAPSHOT_FRESHNESS_MINUTES`
 - `NEXT_PUBLIC_API_BASE_URL` for the frontend, defaulting to `http://localhost:8000/api/v1`
 
 ### Authentication Configuration
@@ -45,6 +46,7 @@ Important environment variables:
 - `STAR_PULSE_COOKIE_SECURE` — Set `true` in production to require HTTPS for refresh cookie (default: `false`)
 - `STAR_PULSE_CORS_ALLOWED_ORIGINS` — JSON list of allowed CORS origins (default: `["http://localhost:3000"]`)
 - `STAR_PULSE_AUDIT_RETENTION_DAYS` — Soft retention hint for audit logs (default: `90`)
+- `STAR_PULSE_BASELINE_SNAPSHOT_FRESHNESS_MINUTES` — Maximum age for a baseline snapshot to pass change preflight checks (default: `60`)
 
 ### Initial Admin Bootstrap (Local Development)
 
@@ -72,15 +74,30 @@ Roles and permissions are seeded idempotently at startup. Existing custom role-p
 
 Approvers can bypass the normal submit→approve flow using the direct-execute endpoint (`POST /api/v1/change-requests/direct-execute`). Direct execution:
 - Requires a non-empty `reason` field (request is rejected without one)
+- Runs server-side change preflight before creating the execution task
 - Creates a change request record with `direct_execute: true`
-- Records a `change.direct_executed` audit event with the reason, device, datastore, and actor
+- Records a `change.direct_executed` audit event with the reason, device, datastore, baseline snapshot, preflight context, and actor
 - Immediately enqueues a Celery execution task
 
 All required audit fields: `actor_user_id`, `action`, `target_type`, `target_id`, `outcome`, `permission`, `direct_execute_reason`, `device_id`, `datastore`.
 
+### Change Safety Loop
+
+Normal configuration changes are contextual to a known device and datastore. Before submit, approval execution, or direct execution, the backend validates:
+
+- device connection config and credential reference
+- successful connection test and capability discovery
+- supported datastore
+- non-empty config payload and reason
+- latest successful baseline snapshot freshness (`STAR_PULSE_BASELINE_SNAPSHOT_FRESHNESS_MINUTES`)
+
+Preflight responses and stored change records include safe summaries only: baseline snapshot IDs/digests, payload digest/length/line count, blocker codes, risk level, and bounded comparison fields. Full config bodies and credentials are not exposed in list/detail responses, audit metadata, task metadata, or logs.
+
+After a controlled NETCONF write succeeds, the worker marks the change as `verifying`, performs a read-only `get-config` for the same datastore, saves a post-change snapshot, compares safe digests with the baseline, and records `executed` or `verification_failed`. Write failures are marked `failed` and do not run post-change verification.
+
 ### Migration and Rollback
 
-Migration: run `star-pulse-migrate` or apply the Alembic revision `0004_auth_rbac_audit`. This adds users, roles, permissions, refresh tokens, change requests, audit logs tables and adds `actor_user_id`/`change_request_id` columns to `task_statuses`.
+Migration: run `star-pulse-migrate` or apply the latest Alembic revision. Revisions through `0006_change_request_safety_loop` add users, roles, permissions, refresh tokens, audit logs, change request payloads, and preflight/verification fields.
 
 Rollback: run `alembic downgrade 0003_device_config_snapshots`. In production, do not disable audit logging or bypass RBAC via config. Rollback must be coordinated with a backend service restart.
 
@@ -144,6 +161,16 @@ API and worker logs include structured fields for `action`, `task_id`, `device_i
 `status`, `duration_ms`, and, when applicable, `error_code`. Passwords, private keys, passphrases,
 resolved credential values, and uncontrolled full configuration bodies must not be included in task
 metadata, API responses, snapshot summaries, discovery results, or logs.
+
+## Local Operator Workflow
+
+1. Bootstrap or create an admin user, then sign in to the operations console.
+2. Create a device with NETCONF host, port, username, and credential material. The credential is stored behind a server-side reference and cleared from frontend state after submission.
+3. Run connection test, capability discovery, and a baseline snapshot from the device profile.
+4. Confirm the onboarding summary reports `ready_for_change: true`; otherwise follow the returned blocker codes and next action.
+5. Submit a contextual change from the device profile or snapshot view. The server preflight returns baseline, payload, risk, and blocker summaries before submission.
+6. Approve the pending request, or use direct execution with a non-empty reason. Both paths validate preflight server-side.
+7. Watch the execution task move through queued/running/verifying, then review `executed`, `verification_failed`, or `failed` status plus the post-change snapshot and comparison summary.
 
 ## Device Profile and Snapshots
 
@@ -227,4 +254,4 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1 npm run dev
 
 ## Phase One Boundary
 
-This phase establishes the platform foundation only. It does not implement full satellite-router business workflows, YANG model parsing, complex NETCONF configuration templates, production Kubernetes manifests, RBAC, approval workflows, or autonomous AI Agent behavior.
+This phase now includes RBAC, audit logging, approval workflows, guided device onboarding, read-only baseline snapshots, server-authoritative preflight, and controlled apply-and-verify execution. It still does not implement autonomous approval/remediation, a full YANG parser, a rollback engine, multi-step maintenance windows, production Kubernetes manifests, or uncontrolled raw configuration exposure.

@@ -156,6 +156,38 @@ class ChangeRequestRepository:
         self.session.refresh(cr)
         return cr
 
+    def update_preflight(
+        self,
+        cr: DeviceConfigChangeRequest,
+        *,
+        status: str,
+        baseline_snapshot_id: int | None,
+        preflight_summary: dict[str, object],
+        risk_summary: dict[str, object],
+        generated_at: datetime,
+    ) -> DeviceConfigChangeRequest:
+        cr.preflight_status = status
+        cr.baseline_snapshot_id = baseline_snapshot_id
+        cr.preflight_summary = preflight_summary
+        cr.risk_summary = risk_summary
+        cr.preflight_generated_at = generated_at
+        return self.save(cr)
+
+    def update_verification(
+        self,
+        cr: DeviceConfigChangeRequest,
+        *,
+        status: str,
+        verification_snapshot_id: int | None,
+        verification_summary: dict[str, object],
+        verified_at: datetime | None,
+    ) -> DeviceConfigChangeRequest:
+        cr.verification_status = status
+        cr.verification_snapshot_id = verification_snapshot_id
+        cr.verification_summary = verification_summary
+        cr.verified_at = verified_at
+        return self.save(cr)
+
     def create_payload(
         self, change_request_id: int, config_body: str
     ) -> DeviceConfigChangePayload:

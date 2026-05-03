@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.api.schemas.device import DeviceCreate
-from app.devices.constants import SUPPORTED_CONFIG_DATASTORES, DeviceTaskType
+from app.devices.constants import SUPPORTED_CONFIG_DATASTORES, DeviceTaskStatus, DeviceTaskType
 from app.devices.repository import DeviceRepository
 from app.devices.service import DeviceService
 from app.storage.models import Device, DeviceConfigSnapshot, DeviceConnectionConfig, TaskStatus
@@ -225,6 +225,105 @@ def test_config_snapshot_list_and_profile_api_are_safe(
     assert "credential_ref" not in profile["connection"]
     assert detail_response.json()["last_config_snapshot"]["content_digest"] == "sha256:profile"
     assert "profile-secret" not in str(profile_response.json())
+
+
+def test_onboarding_summary_reports_readiness_and_excludes_secrets(
+    authed_client: TestClient, db_session: Session
+) -> None:
+    device = DeviceService(db_session).create_device(
+        DeviceCreate(
+            name="sat-router-ready",
+            connection={
+                "host": "192.0.2.41",
+                "username": "netconf",
+                "password": "ready-secret",
+            },
+        )
+    )
+    repository = DeviceRepository(db_session)
+    db_session.add(
+        TaskStatus(
+            task_id="task-connection-ready",
+            task_type=DeviceTaskType.CONNECTION_TEST,
+            status=DeviceTaskStatus.SUCCEEDED,
+            device_id=device.id,
+            completed_at=datetime(2026, 4, 30, 10, 1, tzinfo=UTC),
+        )
+    )
+    repository.upsert_discovery_result(
+        device_id=device.id,
+        source_task_id="task-discovery-ready",
+        capabilities=["urn:test:capability"],
+        system_info={"hostname": "sat-router-ready"},
+        discovered_at=datetime(2026, 4, 30, 10, 2, tzinfo=UTC),
+        summary={"capability_count": 1},
+    )
+    repository.create_config_snapshot(
+        device_id=device.id,
+        source_task_id="task-config-ready",
+        datastore="running",
+        content_digest="sha256:ready",
+        collected_at=datetime(2026, 4, 30, 10, 3, tzinfo=UTC),
+        diff_summary={"changed": False},
+        summary={"content_digest": "sha256:ready"},
+    )
+    db_session.commit()
+
+    response = authed_client.get(f"/api/v1/devices/{device.id}/profile")
+
+    assert response.status_code == 200
+    body = response.json()
+    summary = body["onboarding_summary"]
+    assert summary["ready_for_change"] is True
+    assert summary["blockers"] == []
+    assert summary["connection"]["status"] == DeviceTaskStatus.SUCCEEDED
+    assert summary["discovery"]["status"] == DeviceTaskStatus.SUCCEEDED
+    assert summary["baseline_snapshot"]["content_digest"] == "sha256:ready"
+    assert "ready-secret" not in str(body)
+    assert "credential_ref" not in str(body)
+
+
+def test_onboarding_summary_reports_blockers(
+    authed_client: TestClient, db_session: Session
+) -> None:
+    device = DeviceService(db_session).create_device(DeviceCreate(name="sat-router-blocked"))
+
+    response = authed_client.get(f"/api/v1/devices/{device.id}")
+
+    assert response.status_code == 200
+    summary = response.json()["onboarding_summary"]
+    assert summary["ready_for_change"] is False
+    assert summary["next_action"] == "update_connection"
+    assert "connection_config_missing" in summary["blockers"]
+    assert "capability_discovery_required" in summary["blockers"]
+    assert "baseline_snapshot_required" in summary["blockers"]
+
+
+def test_duplicate_onboarding_task_submission_returns_existing_task(
+    authed_client: TestClient,
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    dispatched: list[str] = []
+    monkeypatch.setattr("app.tasks.service.run_connection_test.delay", dispatched.append)
+    device = DeviceService(db_session).create_device(
+        DeviceCreate(
+            name="sat-router-duplicate",
+            connection={
+                "host": "192.0.2.42",
+                "username": "netconf",
+                "password": "duplicate-secret",
+            },
+        )
+    )
+
+    first = authed_client.post(f"/api/v1/devices/{device.id}/connection-test")
+    second = authed_client.post(f"/api/v1/devices/{device.id}/connection-test")
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()["task_id"] == second.json()["task_id"]
+    assert dispatched == [first.json()["task_id"]]
 
 
 def test_config_snapshot_list_rejects_missing_device(authed_client: TestClient) -> None:
