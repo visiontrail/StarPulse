@@ -249,6 +249,7 @@ class ChangeRequestService:
             status="queued",
             submitter_id=actor.id,
             approver_id=actor.id,
+            approved_at=utc_now(),
             direct_execute=True,
             direct_execute_reason=reason,
             executor_id=actor.id,

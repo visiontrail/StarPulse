@@ -361,7 +361,7 @@ def _device_read(
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
     last_snapshot = repository.get_last_config_snapshot(device_id=device_id)
-    recent_tasks = repository.list_recent_tasks(device_id=device_id, limit=5)
+    recent_tasks = repository.list_recent_tasks(device_id=device_id, limit=20)
     return DeviceRead.model_validate(device).model_copy(
         update={
             "last_config_snapshot": (
