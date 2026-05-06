@@ -775,48 +775,56 @@ function DeviceWorkspace({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded border border-warm bg-paper p-1">
-              <button
-                onClick={() => onDetailModeChange("operational")}
-                className={cn(
-                  "inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition",
-                  detailMode === "operational" ? "bg-canvas text-ink shadow-panel" : "text-muted hover:text-ink"
-                )}
-              >
-                <Gauge className="h-3.5 w-3.5" aria-hidden />
-                NETCONF get
-              </button>
-              <button
-                onClick={() => onDetailModeChange("config")}
-                className={cn(
-                  "inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition",
-                  detailMode === "config" ? "bg-canvas text-ink shadow-panel" : "text-muted hover:text-ink"
-                )}
-              >
-                <FilePenLine className="h-3.5 w-3.5" aria-hidden />
-                edit-config
-              </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+            <div
+              className="w-full shrink-0 rounded border border-warm bg-paper p-1 shadow-panel sm:w-[268px]"
+              role="group"
+              aria-label="Device view mode"
+            >
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  onClick={() => onDetailModeChange("operational")}
+                  className={cn(
+                    "inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium transition",
+                    detailMode === "operational" ? "bg-canvas text-ink shadow-panel" : "text-muted hover:text-ink"
+                  )}
+                >
+                  <Gauge className="h-3.5 w-3.5" aria-hidden />
+                  <span className="truncate">Read Config</span>
+                </button>
+                <button
+                  onClick={() => onDetailModeChange("config")}
+                  className={cn(
+                    "inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium transition",
+                    detailMode === "config" ? "bg-canvas text-ink shadow-panel" : "text-muted hover:text-ink"
+                  )}
+                >
+                  <FilePenLine className="h-3.5 w-3.5" aria-hidden />
+                  <span className="truncate">Change Config</span>
+                </button>
+              </div>
             </div>
-            <DatastoreSelect value={datastore} onValueChange={onDatastoreChange} />
-            <Button
-              onClick={onCollect}
-              disabled={!canCollect || submitBusy || configTaskRunning}
-              busy={submitBusy}
-              title={!canCollect ? "Requires device:collect permission" : undefined}
-            >
-              <Database className="h-4 w-4" aria-hidden />
-              Collect
-            </Button>
-            <Button
-              aria-label="Refresh profile"
-              title="Refresh profile"
-              onClick={onRefresh}
-              busy={loading}
-              className="h-9 w-9 px-0"
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden />
-            </Button>
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <DatastoreSelect value={datastore} onValueChange={onDatastoreChange} />
+              <Button
+                onClick={onCollect}
+                disabled={!canCollect || submitBusy || configTaskRunning}
+                busy={submitBusy}
+                title={!canCollect ? "Requires device:collect permission" : undefined}
+              >
+                <Database className="h-4 w-4" aria-hidden />
+                Collect
+              </Button>
+              <Button
+                aria-label="Refresh profile"
+                title="Refresh profile"
+                onClick={onRefresh}
+                busy={loading}
+                className="h-9 w-9 px-0"
+              >
+                <RefreshCw className="h-4 w-4" aria-hidden />
+              </Button>
+            </div>
           </div>
         </div>
       </header>
