@@ -2,19 +2,30 @@
 
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   CheckCircle,
   ClipboardList,
   Database,
   FileClock,
+  FilePenLine,
   Gauge,
   HardDrive,
   KeyRound,
   ListRestart,
+  Maximize2,
+  Minimize2,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   PlayCircle,
   RefreshCw,
   Router,
+  Search,
   Send,
+  Settings2,
   ShieldCheck,
   Sparkles,
   TerminalSquare,
@@ -47,6 +58,8 @@ import { cn } from "@/lib/utils";
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
 type Tab = "devices" | "changes" | "admin" | "audit";
+type DeviceListMode = "collapsed" | "compact" | "expanded";
+type DeviceDetailMode = "operational" | "config";
 
 export default function OperationsConsole() {
   const { state } = useSession();
@@ -151,15 +164,44 @@ function DevicesTab() {
   const [datastore, setDatastore] = useState("running");
   const [lastTask, setLastTask] = useState<TaskRead | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [listMode, setListMode] = useState<DeviceListMode>("compact");
+  const [detailMode, setDetailMode] = useState<DeviceDetailMode>("operational");
+  const [deviceQuery, setDeviceQuery] = useState("");
+  const [selectedObjectPath, setSelectedObjectPath] = useState("root");
+  const [changeSummary, setChangeSummary] = useState("");
+  const [changeReason, setChangeReason] = useState("");
+  const [configBody, setConfigBody] = useState("");
+  const [leafDrafts, setLeafDrafts] = useState<Record<string, string>>({});
+  const [preflight, setPreflight] = useState<ChangePreflightResponse | null>(null);
   const [devicesState, setDevicesState] = useState<LoadState>("idle");
   const [profileState, setProfileState] = useState<LoadState>("idle");
   const [submitState, setSubmitState] = useState<LoadState>("idle");
+  const [changeSubmitState, setChangeSubmitState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
 
   const selectedDevice = useMemo(
     () => devices.find((d) => d.id === selectedDeviceId) ?? null,
     [devices, selectedDeviceId]
   );
+
+  const filteredDevices = useMemo(() => {
+    const query = deviceQuery.trim().toLowerCase();
+    if (!query) return devices;
+    return devices.filter((device) => {
+      const connection = device.connection;
+      return [
+        device.name,
+        device.status,
+        device.group,
+        device.serial_number,
+        connection?.host,
+        connection?.protocol,
+        String(connection?.port ?? "")
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query));
+    });
+  }, [deviceQuery, devices]);
 
   const loadDevices = useCallback(async () => {
     setDevicesState("loading");
@@ -199,6 +241,9 @@ function DevicesTab() {
   useEffect(() => {
     if (selectedDeviceId !== null) void loadProfile(selectedDeviceId);
     else { setProfile(null); setSnapshots([]); }
+    setSelectedObjectPath("root");
+    setPreflight(null);
+    setLeafDrafts({});
   }, [loadProfile, selectedDeviceId]);
 
   const configTaskRunning = profile?.recent_tasks.some(
@@ -259,62 +304,85 @@ function DevicesTab() {
     }
   }
 
+  async function previewConfigChange() {
+    if (!selectedDeviceId || !canSubmitChange) return;
+    setChangeSubmitState("loading");
+    setError(null);
+    try {
+      const result = await api.previewChangePreflight({
+        device_id: selectedDeviceId,
+        datastore,
+        change_summary: changeSummary,
+        config_body: configBody,
+        reason: changeReason
+      });
+      setPreflight(result);
+      setChangeSubmitState("loaded");
+    } catch (e) {
+      setChangeSubmitState("error");
+      setError(errorMessage(e));
+    }
+  }
+
+  async function submitConfigChange() {
+    if (!selectedDeviceId || !canSubmitChange) return;
+    if (!preflight?.passed) {
+      await previewConfigChange();
+      return;
+    }
+    setChangeSubmitState("loading");
+    setError(null);
+    try {
+      await api.submitChangeRequest({
+        device_id: selectedDeviceId,
+        datastore,
+        change_summary: changeSummary,
+        config_body: configBody,
+        reason: changeReason
+      });
+      setChangeSummary("");
+      setChangeReason("");
+      setConfigBody("");
+      setLeafDrafts({});
+      setPreflight(null);
+      await loadProfile(selectedDeviceId);
+      setChangeSubmitState("loaded");
+    } catch (e) {
+      setChangeSubmitState("error");
+      setError(errorMessage(e));
+    }
+  }
+
   return (
-    <div className="grid h-full min-h-0 w-full grid-rows-[minmax(13rem,34dvh)_minmax(0,1fr)] gap-2 lg:grid-cols-[clamp(300px,22vw,420px)_minmax(0,1fr)] lg:grid-rows-none xl:gap-3">
-      <aside className="flex min-h-0 flex-col rounded border border-warm bg-canvas/95">
-        <div className="flex h-16 shrink-0 items-center justify-between border-b border-warm px-4">
-          <h2 className="text-xl font-semibold">Operations</h2>
-          <div className="flex items-center gap-2">
-            {canManage ? (
-              <Button
-                aria-label="Add device"
-                onClick={() => setShowCreate((value) => !value)}
-                className="h-9 w-9 px-0"
-              >
-                <Plus className="h-4 w-4" aria-hidden />
-              </Button>
-            ) : null}
-            <Button
-              aria-label="Refresh devices"
-              onClick={() => void loadDevices()}
-              busy={devicesState === "loading"}
-              className="h-9 w-9 px-0"
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden />
-            </Button>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto p-3">
-          {showCreate && canManage ? (
-            <CreateDeviceForm
-              onSuccess={async (deviceId) => {
-                setShowCreate(false);
-                await loadDevices();
-                setSelectedDeviceId(deviceId);
-              }}
-            />
-          ) : null}
-          {devicesState === "loading" ? <DeviceListSkeleton /> : null}
-          {devicesState === "loaded" && devices.length === 0 ? (
-            <EmptyState icon={<Router className="h-6 w-6" />} title="No devices registered" />
-          ) : null}
-          {devicesState === "error" ? (
-            <ErrorPanel message={error} onRetry={() => void loadDevices()} />
-          ) : null}
-          {devices.length > 0 ? (
-            <div className="space-y-2">
-              {devices.map((d) => (
-                <DeviceListItem
-                  key={d.id}
-                  device={d}
-                  active={d.id === selectedDeviceId}
-                  onSelect={() => setSelectedDeviceId(d.id)}
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </aside>
+    <div
+      className={cn(
+        "grid h-full min-h-0 w-full grid-rows-[minmax(12rem,32dvh)_minmax(0,1fr)] gap-2 lg:grid-rows-none xl:gap-3",
+        listMode === "collapsed" && "lg:grid-cols-[64px_minmax(0,1fr)]",
+        listMode === "compact" && "lg:grid-cols-[clamp(320px,24vw,440px)_minmax(0,1fr)]",
+        listMode === "expanded" && "lg:grid-cols-[minmax(720px,76vw)_minmax(360px,1fr)]"
+      )}
+    >
+      <DeviceInventoryPane
+        mode={listMode}
+        devices={filteredDevices}
+        allDeviceCount={devices.length}
+        selectedDeviceId={selectedDeviceId}
+        query={deviceQuery}
+        showCreate={showCreate}
+        canManage={canManage}
+        loading={devicesState === "loading"}
+        error={devicesState === "error" ? error : null}
+        onModeChange={setListMode}
+        onQueryChange={setDeviceQuery}
+        onToggleCreate={() => setShowCreate((value) => !value)}
+        onRefresh={() => void loadDevices()}
+        onSelect={setSelectedDeviceId}
+        onCreateSuccess={async (deviceId) => {
+          setShowCreate(false);
+          await loadDevices();
+          setSelectedDeviceId(deviceId);
+        }}
+      />
 
       <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-warm bg-canvas/95">
         {selectedDevice === null && devicesState !== "loading" ? (
@@ -324,98 +392,933 @@ function DevicesTab() {
         ) : null}
 
         {selectedDevice !== null ? (
-          <>
-            <header className="flex shrink-0 flex-col gap-4 border-b border-warm px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <StatusBadge status={profile?.status ?? selectedDevice.status} />
-                  <span className="font-mono text-[11px] text-muted">
-                    {selectedDevice.group ?? "ungrouped"}
-                  </span>
-                </div>
-                <h2 className="truncate text-2xl font-semibold">{selectedDevice.name}</h2>
-                <p className="mt-1 font-mono text-xs text-muted">
-                  {selectedDevice.connection
-                    ? `${selectedDevice.connection.protocol}://${selectedDevice.connection.host}:${selectedDevice.connection.port}`
-                    : "connection unavailable"}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <DatastoreSelect value={datastore} onValueChange={setDatastore} />
-                <Button
-                  onClick={() => void submitSnapshot()}
-                  disabled={!canCollect || submitState === "loading" || Boolean(configTaskRunning)}
-                  busy={submitState === "loading"}
-                  title={!canCollect ? "Requires device:collect permission" : undefined}
-                >
-                  <Database className="h-4 w-4" aria-hidden />
-                  Collect
-                </Button>
-                <Button
-                  aria-label="Refresh profile"
-                  onClick={() => void loadProfile(selectedDevice.id)}
-                  busy={profileState === "loading"}
-                  className="h-9 w-9 px-0"
-                >
-                  <RefreshCw className="h-4 w-4" aria-hidden />
-                </Button>
-              </div>
-            </header>
-
-            {error ? (
-              <div className="px-4 pt-4">
-                <ErrorPanel message={error} onRetry={() => void loadProfile(selectedDevice.id)} />
-              </div>
-            ) : null}
-
-            <div className="grid min-h-0 flex-1 gap-4 overflow-auto p-3 md:p-4 xl:grid-cols-[minmax(0,1fr)_clamp(320px,26vw,440px)]">
-              <div className="space-y-4">
-                <ProfileGrid profile={profile} loading={profileState === "loading"} />
-                <SnapshotTable
-                  snapshots={snapshots}
-                  canSubmitChange={canSubmitChange}
-                  canApprove={hasPermission(PERM.DEVICE_CHANGE_APPROVE)}
-                  deviceId={selectedDeviceId ?? undefined}
-                  onStartChange={(snapshot) => setDatastore(snapshot.datastore)}
-                  onRollbackSuccess={() => { void loadProfile(selectedDeviceId!); }}
-                />
-              </div>
-              <div className="space-y-4">
-                <OnboardingPanel
-                  profile={profile}
-                  canCollect={canCollect}
-                  canManage={canManage}
-                  busy={submitState === "loading"}
-                  onRun={(step) => void runOnboardingTask(step)}
-                  onClearStale={() => void clearStaleTasks()}
-                />
-                <ReadOnlyPanel
-                  profile={profile}
-                  lastTask={lastTask}
-                  configTaskRunning={Boolean(configTaskRunning)}
-                />
-                {canSubmitChange ? (
-                  <ChangeRequestForm
-                    initialDeviceId={selectedDevice.id}
-                    initialDatastore={datastore}
-                    onSuccess={() => undefined}
-                    compact
-                    disabledReason={
-                      readyForChange
-                        ? null
-                        : profile?.onboarding_summary?.blockers.join(", ") ||
-                          "device onboarding is incomplete"
-                    }
-                  />
-                ) : null}
-                <RecentTasks tasks={profile?.recent_tasks ?? []} />
-              </div>
-            </div>
-          </>
+          <DeviceWorkspace
+            device={selectedDevice}
+            profile={profile}
+            snapshots={snapshots}
+            datastore={datastore}
+            detailMode={detailMode}
+            selectedPath={selectedObjectPath}
+            loading={profileState === "loading"}
+            error={error}
+            canCollect={canCollect}
+            canManage={canManage}
+            canSubmitChange={canSubmitChange}
+            canApprove={hasPermission(PERM.DEVICE_CHANGE_APPROVE)}
+            readyForChange={readyForChange}
+            submitBusy={submitState === "loading"}
+            changeBusy={changeSubmitState === "loading"}
+            configTaskRunning={Boolean(configTaskRunning)}
+            lastTask={lastTask}
+            changeSummary={changeSummary}
+            changeReason={changeReason}
+            configBody={configBody}
+            leafDrafts={leafDrafts}
+            preflight={preflight}
+            onDetailModeChange={setDetailMode}
+            onDatastoreChange={setDatastore}
+            onRefresh={() => void loadProfile(selectedDevice.id)}
+            onCollect={() => void submitSnapshot()}
+            onRunOnboarding={(step) => void runOnboardingTask(step)}
+            onClearStale={() => void clearStaleTasks()}
+            onSelectPath={setSelectedObjectPath}
+            onChangeSummaryChange={(value) => {
+              setChangeSummary(value);
+              setPreflight(null);
+            }}
+            onChangeReasonChange={(value) => {
+              setChangeReason(value);
+              setPreflight(null);
+            }}
+            onConfigBodyChange={(value) => {
+              setConfigBody(value);
+              setPreflight(null);
+            }}
+            onLeafDraftChange={(path, value) => {
+              setLeafDrafts((current) => ({ ...current, [path]: value }));
+              setPreflight(null);
+            }}
+            onPreviewChange={() => void previewConfigChange()}
+            onSubmitChange={() => void submitConfigChange()}
+            onRollbackSuccess={() => { void loadProfile(selectedDeviceId!); }}
+          />
         ) : null}
       </section>
     </div>
   );
+}
+
+function DeviceInventoryPane({
+  mode,
+  devices,
+  allDeviceCount,
+  selectedDeviceId,
+  query,
+  showCreate,
+  canManage,
+  loading,
+  error,
+  onModeChange,
+  onQueryChange,
+  onToggleCreate,
+  onRefresh,
+  onSelect,
+  onCreateSuccess
+}: {
+  mode: DeviceListMode;
+  devices: Device[];
+  allDeviceCount: number;
+  selectedDeviceId: number | null;
+  query: string;
+  showCreate: boolean;
+  canManage: boolean;
+  loading: boolean;
+  error: string | null;
+  onModeChange: (mode: DeviceListMode) => void;
+  onQueryChange: (query: string) => void;
+  onToggleCreate: () => void;
+  onRefresh: () => void;
+  onSelect: (deviceId: number) => void;
+  onCreateSuccess: (deviceId: number) => Promise<void>;
+}) {
+  if (mode === "collapsed") {
+    const selected = devices.find((device) => device.id === selectedDeviceId);
+    return (
+      <aside className="flex min-h-0 flex-col items-center gap-2 rounded border border-warm bg-canvas/95 py-3">
+        <Button
+          aria-label="Expand device list"
+          title="Expand device list"
+          onClick={() => onModeChange("compact")}
+          className="h-9 w-9 px-0"
+        >
+          <PanelLeftOpen className="h-4 w-4" aria-hidden />
+        </Button>
+        <Button
+          aria-label="Open full device list"
+          title="Open full device list"
+          onClick={() => onModeChange("expanded")}
+          className="h-9 w-9 px-0 bg-paper"
+        >
+          <Maximize2 className="h-4 w-4" aria-hidden />
+        </Button>
+        <div className="my-1 h-px w-8 bg-warm" />
+        <Button
+          aria-label="Refresh devices"
+          title="Refresh devices"
+          onClick={onRefresh}
+          busy={loading}
+          className="h-9 w-9 px-0"
+        >
+          <RefreshCw className="h-4 w-4" aria-hidden />
+        </Button>
+        <div className="mt-auto flex min-h-0 w-full flex-col items-center gap-2 px-2">
+          <StatusBadge status={selected?.status ?? "idle"} />
+          <span className="font-mono text-[10px] text-muted">#{selectedDeviceId ?? "-"}</span>
+        </div>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="flex min-h-0 flex-col rounded border border-warm bg-canvas/95">
+      <div className="flex h-16 shrink-0 items-center justify-between border-b border-warm px-4">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold">Device Inventory</h2>
+          <p className="font-mono text-[11px] text-muted">{devices.length}/{allDeviceCount} visible</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button
+            aria-label="Collapse device list"
+            title="Collapse device list"
+            onClick={() => onModeChange("collapsed")}
+            className="h-9 w-9 px-0 bg-paper"
+          >
+            <PanelLeftClose className="h-4 w-4" aria-hidden />
+          </Button>
+          <Button
+            aria-label={mode === "expanded" ? "Compact device list" : "Expand device list"}
+            title={mode === "expanded" ? "Compact device list" : "Expand device list"}
+            onClick={() => onModeChange(mode === "expanded" ? "compact" : "expanded")}
+            className="h-9 w-9 px-0"
+          >
+            {mode === "expanded" ? (
+              <Minimize2 className="h-4 w-4" aria-hidden />
+            ) : (
+              <Maximize2 className="h-4 w-4" aria-hidden />
+            )}
+          </Button>
+          {canManage ? (
+            <Button
+              aria-label="Add device"
+              title="Add device"
+              onClick={onToggleCreate}
+              className="h-9 w-9 px-0"
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+            </Button>
+          ) : null}
+          <Button
+            aria-label="Refresh devices"
+            title="Refresh devices"
+            onClick={onRefresh}
+            busy={loading}
+            className="h-9 w-9 px-0"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden />
+          </Button>
+        </div>
+      </div>
+
+      <div className="border-b border-warm p-3">
+        <label className="relative block">
+          <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-muted" aria-hidden />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search name, host, group, status"
+            className="h-9 w-full rounded border border-warm bg-paper pl-8 pr-2 text-sm outline-none transition focus:border-warm-strong"
+          />
+        </label>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        {showCreate && canManage ? <CreateDeviceForm onSuccess={onCreateSuccess} /> : null}
+        {loading ? <DeviceListSkeleton /> : null}
+        {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : null}
+        {!loading && !error && allDeviceCount === 0 ? (
+          <EmptyState icon={<Router className="h-6 w-6" />} title="No devices registered" />
+        ) : null}
+        {!loading && !error && allDeviceCount > 0 && devices.length === 0 ? (
+          <EmptyState icon={<Search className="h-6 w-6" />} title="No matching devices" />
+        ) : null}
+        {devices.length > 0 && mode === "compact" ? (
+          <div className="space-y-2">
+            {devices.map((device) => (
+              <DeviceListItem
+                key={device.id}
+                device={device}
+                active={device.id === selectedDeviceId}
+                onSelect={() => onSelect(device.id)}
+              />
+            ))}
+          </div>
+        ) : null}
+        {devices.length > 0 && mode === "expanded" ? (
+          <DeviceInventoryTable
+            devices={devices}
+            selectedDeviceId={selectedDeviceId}
+            onSelect={onSelect}
+          />
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+function DeviceInventoryTable({
+  devices,
+  selectedDeviceId,
+  onSelect
+}: {
+  devices: Device[];
+  selectedDeviceId: number | null;
+  onSelect: (deviceId: number) => void;
+}) {
+  return (
+    <div className="overflow-x-auto rounded border border-warm">
+      <table className="w-full min-w-[980px] border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-warm bg-paper/70 text-left font-mono text-[11px] uppercase text-muted">
+            <th className="px-3 py-2 font-medium">Device</th>
+            <th className="px-3 py-2 font-medium">Status</th>
+            <th className="px-3 py-2 font-medium">Endpoint</th>
+            <th className="px-3 py-2 font-medium">Group</th>
+            <th className="px-3 py-2 font-medium">Serial</th>
+            <th className="px-3 py-2 font-medium">Discovery</th>
+            <th className="px-3 py-2 font-medium">Snapshot</th>
+            <th className="px-3 py-2 font-medium">Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {devices.map((device) => (
+            <tr
+              key={device.id}
+              onClick={() => onSelect(device.id)}
+              className={cn(
+                "cursor-pointer border-b border-warm/70 transition last:border-0 hover:bg-paper",
+                device.id === selectedDeviceId && "bg-surface-soft"
+              )}
+            >
+              <td className="px-3 py-3">
+                <p className="max-w-[220px] truncate font-semibold">{device.name}</p>
+                <p className="font-mono text-[11px] text-muted">#{device.id}</p>
+              </td>
+              <td className="px-3 py-3"><StatusBadge status={device.status} /></td>
+              <td className="px-3 py-3 font-mono text-xs text-muted">
+                {device.connection
+                  ? `${device.connection.protocol}://${device.connection.host}:${device.connection.port}`
+                  : "-"}
+              </td>
+              <td className="px-3 py-3 text-xs text-muted">{device.group ?? "-"}</td>
+              <td className="px-3 py-3 font-mono text-xs text-muted">{device.serial_number ?? "-"}</td>
+              <td className="px-3 py-3 text-xs text-muted">{summaryValue(device.last_discovery?.summary)}</td>
+              <td className="px-3 py-3 font-mono text-xs text-muted">
+                {digestShort(device.last_config_snapshot?.content_digest)}
+              </td>
+              <td className="px-3 py-3 text-xs text-muted">{formatDate(device.updated_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DeviceWorkspace({
+  device,
+  profile,
+  snapshots,
+  datastore,
+  detailMode,
+  selectedPath,
+  loading,
+  error,
+  canCollect,
+  canManage,
+  canSubmitChange,
+  canApprove,
+  readyForChange,
+  submitBusy,
+  changeBusy,
+  configTaskRunning,
+  lastTask,
+  changeSummary,
+  changeReason,
+  configBody,
+  leafDrafts,
+  preflight,
+  onDetailModeChange,
+  onDatastoreChange,
+  onRefresh,
+  onCollect,
+  onRunOnboarding,
+  onClearStale,
+  onSelectPath,
+  onChangeSummaryChange,
+  onChangeReasonChange,
+  onConfigBodyChange,
+  onLeafDraftChange,
+  onPreviewChange,
+  onSubmitChange,
+  onRollbackSuccess
+}: {
+  device: Device;
+  profile: DeviceProfile | null;
+  snapshots: ConfigSnapshot[];
+  datastore: string;
+  detailMode: DeviceDetailMode;
+  selectedPath: string;
+  loading: boolean;
+  error: string | null;
+  canCollect: boolean;
+  canManage: boolean;
+  canSubmitChange: boolean;
+  canApprove: boolean;
+  readyForChange: boolean;
+  submitBusy: boolean;
+  changeBusy: boolean;
+  configTaskRunning: boolean;
+  lastTask: TaskRead | null;
+  changeSummary: string;
+  changeReason: string;
+  configBody: string;
+  leafDrafts: Record<string, string>;
+  preflight: ChangePreflightResponse | null;
+  onDetailModeChange: (mode: DeviceDetailMode) => void;
+  onDatastoreChange: (datastore: string) => void;
+  onRefresh: () => void;
+  onCollect: () => void;
+  onRunOnboarding: (step: "connection" | "discovery" | "baseline") => void;
+  onClearStale: () => void;
+  onSelectPath: (path: string) => void;
+  onChangeSummaryChange: (value: string) => void;
+  onChangeReasonChange: (value: string) => void;
+  onConfigBodyChange: (value: string) => void;
+  onLeafDraftChange: (path: string, value: string) => void;
+  onPreviewChange: () => void;
+  onSubmitChange: () => void;
+  onRollbackSuccess: () => void;
+}) {
+  const operationalTree = useMemo(
+    () => buildOperationalTree(device, profile, snapshots, lastTask),
+    [device, lastTask, profile, snapshots]
+  );
+  const configTree = useMemo(
+    () =>
+      buildConfigTree({
+        device,
+        profile,
+        datastore,
+        snapshots,
+        changeSummary,
+        changeReason,
+        configBody,
+        leafDrafts,
+        preflight
+      }),
+    [changeReason, changeSummary, configBody, datastore, device, leafDrafts, preflight, profile, snapshots]
+  );
+  const modeDisabledReason = readyForChange
+    ? null
+    : profile?.onboarding_summary?.blockers.join(", ") || "device onboarding is incomplete";
+
+  function editTreeLeaf(path: string, value: string) {
+    if (path.endsWith(".change_summary")) onChangeSummaryChange(value);
+    else if (path.endsWith(".reason")) onChangeReasonChange(value);
+    else if (path.endsWith(".config_body")) onConfigBodyChange(value);
+    else onLeafDraftChange(path, value);
+  }
+
+  return (
+    <>
+      <header className="shrink-0 border-b border-warm px-4 py-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <StatusBadge status={profile?.status ?? device.status} />
+              <span className="font-mono text-[11px] text-muted">{device.group ?? "ungrouped"}</span>
+              <span className="font-mono text-[11px] text-muted">#{device.id}</span>
+            </div>
+            <h2 className="truncate text-2xl font-semibold">{device.name}</h2>
+            <p className="mt-1 truncate font-mono text-xs text-muted">
+              {device.connection
+                ? `${device.connection.protocol}://${device.connection.host}:${device.connection.port}`
+                : "connection unavailable"}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded border border-warm bg-paper p-1">
+              <button
+                onClick={() => onDetailModeChange("operational")}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition",
+                  detailMode === "operational" ? "bg-canvas text-ink shadow-panel" : "text-muted hover:text-ink"
+                )}
+              >
+                <Gauge className="h-3.5 w-3.5" aria-hidden />
+                NETCONF get
+              </button>
+              <button
+                onClick={() => onDetailModeChange("config")}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition",
+                  detailMode === "config" ? "bg-canvas text-ink shadow-panel" : "text-muted hover:text-ink"
+                )}
+              >
+                <FilePenLine className="h-3.5 w-3.5" aria-hidden />
+                edit-config
+              </button>
+            </div>
+            <DatastoreSelect value={datastore} onValueChange={onDatastoreChange} />
+            <Button
+              onClick={onCollect}
+              disabled={!canCollect || submitBusy || configTaskRunning}
+              busy={submitBusy}
+              title={!canCollect ? "Requires device:collect permission" : undefined}
+            >
+              <Database className="h-4 w-4" aria-hidden />
+              Collect
+            </Button>
+            <Button
+              aria-label="Refresh profile"
+              title="Refresh profile"
+              onClick={onRefresh}
+              busy={loading}
+              className="h-9 w-9 px-0"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden />
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {error ? (
+        <div className="px-4 pt-4">
+          <ErrorPanel message={error} onRetry={onRefresh} />
+        </div>
+      ) : null}
+
+      {detailMode === "operational" ? (
+        <div className="grid min-h-0 flex-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_clamp(320px,27vw,440px)]">
+          <div className="min-h-0 space-y-3">
+            <ProfileGrid profile={profile} loading={loading} />
+            <InfoPanel icon={<Settings2 />} title="NETCONF Object Tree">
+              <ObjectTree
+                data={operationalTree}
+                selectedPath={selectedPath}
+                onSelectPath={onSelectPath}
+              />
+            </InfoPanel>
+          </div>
+          <aside className="space-y-3">
+            <OnboardingPanel
+              profile={profile}
+              canCollect={canCollect}
+              canManage={canManage}
+              busy={submitBusy}
+              onRun={onRunOnboarding}
+              onClearStale={onClearStale}
+            />
+            <ReadOnlyPanel
+              profile={profile}
+              lastTask={lastTask}
+              configTaskRunning={configTaskRunning}
+            />
+            <SnapshotTable
+              snapshots={snapshots}
+              canSubmitChange={canSubmitChange}
+              canApprove={canApprove}
+              deviceId={device.id}
+              onStartChange={(snapshot) => onDatastoreChange(snapshot.datastore)}
+              onRollbackSuccess={onRollbackSuccess}
+            />
+            <RecentTasks tasks={profile?.recent_tasks ?? []} />
+          </aside>
+        </div>
+      ) : (
+        <div className="grid min-h-0 flex-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_clamp(360px,32vw,520px)]">
+          <InfoPanel icon={<Settings2 />} title="Config Model Tree">
+            <ObjectTree
+              data={configTree}
+              selectedPath={selectedPath}
+              editable
+              onSelectPath={onSelectPath}
+              onLeafChange={editTreeLeaf}
+              editablePath={(path) =>
+                path.includes(".change_request.") || path.includes(".candidate_configuration.")
+              }
+            />
+          </InfoPanel>
+          <ConfigEditPanel
+            device={device}
+            datastore={datastore}
+            canSubmitChange={canSubmitChange}
+            disabledReason={modeDisabledReason}
+            busy={changeBusy}
+            changeSummary={changeSummary}
+            changeReason={changeReason}
+            configBody={configBody}
+            preflight={preflight}
+            onChangeSummaryChange={onChangeSummaryChange}
+            onChangeReasonChange={onChangeReasonChange}
+            onConfigBodyChange={onConfigBodyChange}
+            onPreview={onPreviewChange}
+            onSubmit={onSubmitChange}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function ConfigEditPanel({
+  device,
+  datastore,
+  canSubmitChange,
+  disabledReason,
+  busy,
+  changeSummary,
+  changeReason,
+  configBody,
+  preflight,
+  onChangeSummaryChange,
+  onChangeReasonChange,
+  onConfigBodyChange,
+  onPreview,
+  onSubmit
+}: {
+  device: Device;
+  datastore: string;
+  canSubmitChange: boolean;
+  disabledReason: string | null;
+  busy: boolean;
+  changeSummary: string;
+  changeReason: string;
+  configBody: string;
+  preflight: ChangePreflightResponse | null;
+  onChangeSummaryChange: (value: string) => void;
+  onChangeReasonChange: (value: string) => void;
+  onConfigBodyChange: (value: string) => void;
+  onPreview: () => void;
+  onSubmit: () => void;
+}) {
+  const blocked = !canSubmitChange || Boolean(disabledReason);
+  const missingRequired = !changeSummary.trim() || !changeReason.trim() || !configBody.trim();
+  return (
+    <InfoPanel icon={<FilePenLine />} title="Change Control">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Metric label="Device" value={`#${device.id}`} />
+          <Metric label="Datastore" value={datastore} />
+        </div>
+        <div>
+          <FieldLabel>Change summary</FieldLabel>
+          <input
+            value={changeSummary}
+            onChange={(event) => onChangeSummaryChange(event.target.value)}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
+          />
+        </div>
+        <div>
+          <FieldLabel>Reason</FieldLabel>
+          <textarea
+            value={changeReason}
+            onChange={(event) => onChangeReasonChange(event.target.value)}
+            rows={3}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
+          />
+        </div>
+        <div>
+          <FieldLabel>NETCONF payload</FieldLabel>
+          <textarea
+            value={configBody}
+            onChange={(event) => onConfigBodyChange(event.target.value)}
+            rows={12}
+            spellCheck={false}
+            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
+          />
+        </div>
+        {preflight ? <PreflightSummary preflight={preflight} compact /> : null}
+        {!canSubmitChange ? <p className="text-xs text-warn">Requires device change submission permission.</p> : null}
+        {disabledReason ? <p className="text-xs text-warn">{disabledReason}</p> : null}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={onPreview}
+            busy={busy}
+            disabled={blocked || missingRequired || busy}
+          >
+            <Sparkles className="h-4 w-4" aria-hidden />
+            Preview
+          </Button>
+          <Button
+            onClick={onSubmit}
+            busy={busy}
+            disabled={blocked || missingRequired || busy || !preflight?.passed}
+          >
+            <Send className="h-4 w-4" aria-hidden />
+            Submit
+          </Button>
+        </div>
+      </div>
+    </InfoPanel>
+  );
+}
+
+function ObjectTree({
+  data,
+  selectedPath,
+  editable = false,
+  onSelectPath,
+  onLeafChange,
+  editablePath
+}: {
+  data: unknown;
+  selectedPath: string;
+  editable?: boolean;
+  onSelectPath: (path: string) => void;
+  onLeafChange?: (path: string, value: string) => void;
+  editablePath?: (path: string) => boolean;
+}) {
+  const [openPaths, setOpenPaths] = useState<Set<string>>(
+    () => new Set(["root", "root.netconf_get", "root.netconf_edit_config"])
+  );
+
+  function toggle(path: string) {
+    setOpenPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  function expandAll() {
+    const paths = new Set<string>();
+    collectObjectPaths(data, "root", paths);
+    setOpenPaths(paths);
+  }
+
+  function collapseAll() {
+    setOpenPaths(new Set(["root"]));
+  }
+
+  return (
+    <div className="min-h-0">
+      <div className="mb-3 flex items-center justify-between gap-2 border-b border-warm pb-3">
+        <div className="min-w-0">
+          <p className="truncate font-mono text-[11px] text-muted">{selectedPath}</p>
+        </div>
+        <div className="flex shrink-0 gap-1.5">
+          <Button aria-label="Expand all" title="Expand all" onClick={expandAll} className="h-8 w-8 px-0 bg-paper">
+            <ChevronsRight className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+          <Button aria-label="Collapse all" title="Collapse all" onClick={collapseAll} className="h-8 w-8 px-0 bg-paper">
+            <ChevronsLeft className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        </div>
+      </div>
+      <div className="max-h-[64dvh] overflow-auto rounded border border-warm bg-paper/70 p-2">
+        <TreeRows
+          label="root"
+          value={data}
+          path="root"
+          depth={0}
+          openPaths={openPaths}
+          selectedPath={selectedPath}
+          editable={editable}
+          editablePath={editablePath}
+          onToggle={toggle}
+          onSelectPath={onSelectPath}
+          onLeafChange={onLeafChange}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TreeRows({
+  label,
+  value,
+  path,
+  depth,
+  openPaths,
+  selectedPath,
+  editable,
+  editablePath,
+  onToggle,
+  onSelectPath,
+  onLeafChange
+}: {
+  label: string;
+  value: unknown;
+  path: string;
+  depth: number;
+  openPaths: Set<string>;
+  selectedPath: string;
+  editable: boolean;
+  editablePath?: (path: string) => boolean;
+  onToggle: (path: string) => void;
+  onSelectPath: (path: string) => void;
+  onLeafChange?: (path: string, value: string) => void;
+}) {
+  const objectLike = isObjectLike(value);
+  const open = openPaths.has(path);
+  const entries = objectLike ? objectEntries(value) : [];
+  const leafEditable = editable && !objectLike && (editablePath ? editablePath(path) : true);
+
+  return (
+    <div>
+      <div
+        className={cn(
+          "grid min-h-9 grid-cols-[minmax(180px,0.8fr)_minmax(180px,1.2fr)] items-center gap-3 rounded px-2 text-sm transition",
+          selectedPath === path ? "bg-canvas" : "hover:bg-canvas/70"
+        )}
+        style={{ paddingLeft: `${8 + depth * 18}px` }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            onSelectPath(path);
+            if (objectLike) onToggle(path);
+          }}
+          className="flex min-w-0 items-center gap-1.5 text-left"
+        >
+          {objectLike ? (
+            open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <span className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="truncate font-medium">{label}</span>
+          <span className="shrink-0 rounded border border-warm bg-paper px-1.5 font-mono text-[10px] uppercase text-muted">
+            {treeType(value)}
+          </span>
+        </button>
+        <div className="min-w-0">
+          {leafEditable ? (
+            <input
+              value={formatTreeValue(value)}
+              onChange={(event) => onLeafChange?.(path, event.target.value)}
+              className="h-8 w-full rounded border border-warm bg-canvas px-2 font-mono text-xs outline-none focus:border-warm-strong"
+            />
+          ) : (
+            <p className="truncate font-mono text-xs text-muted" title={formatTreeValue(value)}>
+              {objectLike ? `${entries.length} ${Array.isArray(value) ? "items" : "children"}` : formatTreeValue(value)}
+            </p>
+          )}
+        </div>
+      </div>
+      {objectLike && open ? (
+        <div>
+          {entries.map(([childLabel, childValue]) => (
+            <TreeRows
+              key={`${path}.${childLabel}`}
+              label={childLabel}
+              value={childValue}
+              path={`${path}.${childLabel}`}
+              depth={depth + 1}
+              openPaths={openPaths}
+              selectedPath={selectedPath}
+              editable={editable}
+              editablePath={editablePath}
+              onToggle={onToggle}
+              onSelectPath={onSelectPath}
+              onLeafChange={onLeafChange}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function buildOperationalTree(
+  device: Device,
+  profile: DeviceProfile | null,
+  snapshots: ConfigSnapshot[],
+  lastTask: TaskRead | null
+) {
+  const effectiveProfile = profile ?? device;
+  return {
+    netconf_get: {
+      identity: {
+        id: device.id,
+        name: device.name,
+        status: effectiveProfile.status,
+        group: device.group,
+        serial_number: effectiveProfile.serial_number
+      },
+      connection: sanitizeConnection(device.connection),
+      server_capabilities: profile?.capabilities ?? device.last_discovery?.capabilities ?? [],
+      yang_modules: parseYangCapabilities(profile?.capabilities ?? device.last_discovery?.capabilities ?? []),
+      system_state: profile?.system_info ?? {},
+      discovery: device.last_discovery,
+      onboarding: profile?.onboarding_summary ?? device.onboarding_summary,
+      config_snapshots: snapshots,
+      recent_tasks: profile?.recent_tasks ?? device.recent_tasks,
+      last_submitted_task: lastTask,
+      safety: profile?.safety_summary ?? {}
+    }
+  };
+}
+
+function buildConfigTree({
+  device,
+  profile,
+  datastore,
+  snapshots,
+  changeSummary,
+  changeReason,
+  configBody,
+  leafDrafts,
+  preflight
+}: {
+  device: Device;
+  profile: DeviceProfile | null;
+  datastore: string;
+  snapshots: ConfigSnapshot[];
+  changeSummary: string;
+  changeReason: string;
+  configBody: string;
+  leafDrafts: Record<string, string>;
+  preflight: ChangePreflightResponse | null;
+}) {
+  const latest = snapshots[0] ?? device.last_config_snapshot ?? null;
+  return {
+    netconf_edit_config: {
+      target: {
+        device_id: device.id,
+        datastore,
+        protocol: device.connection?.protocol ?? "netconf",
+        endpoint: device.connection ? `${device.connection.host}:${device.connection.port}` : null
+      },
+      change_request: {
+        change_summary: changeSummary,
+        reason: changeReason
+      },
+      candidate_configuration: {
+        config_body: configBody,
+        edited_leaf_overrides: leafDrafts
+      },
+      model_context: {
+        server_capabilities: profile?.capabilities ?? device.last_discovery?.capabilities ?? [],
+        yang_modules: parseYangCapabilities(profile?.capabilities ?? device.last_discovery?.capabilities ?? []),
+        latest_snapshot: latest,
+        safety: profile?.safety_summary ?? {}
+      },
+      preflight: preflight ?? {
+        status: "not_run",
+        passed: false
+      }
+    }
+  };
+}
+
+function sanitizeConnection(connection: Device["connection"]) {
+  if (!connection) return null;
+  return {
+    protocol: connection.protocol,
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    credential: connection.has_credential ? "referenced" : "missing"
+  };
+}
+
+function parseYangCapabilities(capabilities: string[]) {
+  return capabilities.map((capability) => {
+    const [base, query] = capability.split("?");
+    const params = new URLSearchParams(query ?? "");
+    const moduleName = params.get("module") ?? base.split(":").pop() ?? capability;
+    return {
+      module: moduleName,
+      revision: params.get("revision"),
+      namespace: base,
+      features: params.get("features")?.split(",").filter(Boolean) ?? [],
+      raw: capability
+    };
+  });
+}
+
+function isObjectLike(value: unknown): value is Record<string, unknown> | unknown[] {
+  return value !== null && typeof value === "object";
+}
+
+function objectEntries(value: Record<string, unknown> | unknown[]) {
+  if (Array.isArray(value)) return value.map((item, index) => [String(index), item] as const);
+  return Object.entries(value);
+}
+
+function collectObjectPaths(value: unknown, path: string, paths: Set<string>) {
+  if (!isObjectLike(value)) return;
+  paths.add(path);
+  for (const [label, child] of objectEntries(value)) {
+    collectObjectPaths(child, `${path}.${label}`, paths);
+  }
+}
+
+function treeType(value: unknown) {
+  if (Array.isArray(value)) return "list";
+  if (value === null) return "null";
+  if (typeof value === "object") return "node";
+  return typeof value;
+}
+
+function formatTreeValue(value: unknown) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
 }
 
 // ── Changes Tab ────────────────────────────────────────────────────────────
