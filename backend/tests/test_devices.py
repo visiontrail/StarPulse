@@ -199,7 +199,7 @@ def test_config_snapshot_list_and_profile_api_are_safe(
         discovered_at=datetime(2026, 4, 30, 10, 0, tzinfo=UTC),
         summary={"capability_count": 1},
     )
-    repository.create_config_snapshot(
+    snapshot = repository.create_config_snapshot(
         device_id=device.id,
         source_task_id=task.task_id,
         datastore="running",
@@ -207,21 +207,41 @@ def test_config_snapshot_list_and_profile_api_are_safe(
         collected_at=datetime(2026, 4, 30, 10, 5, tzinfo=UTC),
         diff_summary={"changed": False, "previous_snapshot_id": None},
         summary={"content_digest": "sha256:profile", "datastore": "running"},
+        normalized_content=(
+            '<data xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">'
+            '<interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">'
+            '<interface><name>eth0</name><enabled>true</enabled></interface>'
+            "</interfaces>"
+            '<keystore xmlns="urn:ietf:params:xml:ns:yang:ietf-keystore">'
+            "<cleartext-private-key>profile-secret-key</cleartext-private-key>"
+            "</keystore>"
+            "</data>"
+        ),
     )
     db_session.commit()
 
     snapshots_response = authed_client.get(f"/api/v1/devices/{device.id}/config-snapshots?limit=5")
+    snapshot_detail_response = authed_client.get(
+        f"/api/v1/devices/{device.id}/config-snapshots/{snapshot.id}"
+    )
     profile_response = authed_client.get(f"/api/v1/devices/{device.id}/profile")
     detail_response = authed_client.get(f"/api/v1/devices/{device.id}")
 
     assert snapshots_response.status_code == 200
     assert snapshots_response.json()["items"][0]["content_digest"] == "sha256:profile"
+    assert "config_tree" not in snapshots_response.json()["items"][0]
+    assert snapshot_detail_response.status_code == 200
+    config_tree = snapshot_detail_response.json()["config_tree"]
+    assert config_tree["data"]["interfaces"]["interface"]["name"] == "eth0"
+    assert config_tree["data"]["keystore"]["cleartext-private-key"] == "***REDACTED***"
+    assert "profile-secret-key" not in str(snapshot_detail_response.json())
     assert profile_response.status_code == 200
     profile = profile_response.json()
     assert profile["capabilities"] == ["urn:test:capability"]
     assert profile["last_config_snapshot"]["content_digest"] == "sha256:profile"
     assert profile["recent_tasks"][0]["task_id"] == "task-config-profile"
     assert profile["safety_summary"]["exposes_full_config"] is False
+    assert "config_tree" not in profile["last_config_snapshot"]
     assert "credential_ref" not in profile["connection"]
     assert detail_response.json()["last_config_snapshot"]["content_digest"] == "sha256:profile"
     assert "profile-secret" not in str(profile_response.json())

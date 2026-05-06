@@ -41,6 +41,10 @@ class ConfigSnapshotSummaryRead(BaseModel):
         )
 
 
+class ConfigSnapshotDetailRead(ConfigSnapshotSummaryRead):
+    config_tree: dict[str, object] | None = None
+
+
 class ConfigSnapshotListResponse(BaseModel):
     items: list[ConfigSnapshotSummaryRead]
     limit: int

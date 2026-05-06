@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from app.devices.config_snapshots import ConfigSnapshotService
+from app.common.redaction import REDACTED
+from app.devices.config_snapshots import ConfigSnapshotService, build_config_object_tree
 from app.netconf.services import NetconfOperationResult
 from app.storage.models import Device, TaskStatus
 
@@ -105,6 +106,39 @@ def test_rollback_eligibility_requires_successful_source_task(db_session: Sessio
     task.status = "succeeded"
     db_session.commit()
     assert service.assess_rollback_eligibility(saved.snapshot).eligible is True
+
+
+def test_config_object_tree_parses_netconf_data_and_redacts_sensitive_leaves() -> None:
+    tree = build_config_object_tree(
+        """
+        <data xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
+          <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+            <interface>
+              <name>eth0</name>
+              <enabled>true</enabled>
+            </interface>
+            <interface>
+              <name>eth1</name>
+              <enabled>false</enabled>
+            </interface>
+          </interfaces>
+          <keystore xmlns="urn:ietf:params:xml:ns:yang:ietf-keystore">
+            <cleartext-private-key>super-secret-key</cleartext-private-key>
+          </keystore>
+        </data>
+        """
+    )
+
+    assert tree is not None
+    data = tree["data"]
+    assert isinstance(data, dict)
+    interfaces = data["interfaces"]
+    assert isinstance(interfaces, dict)
+    assert interfaces["_namespace"] == "urn:ietf:params:xml:ns:yang:ietf-interfaces"
+    assert isinstance(interfaces["interface"], list)
+    assert interfaces["interface"][0]["name"] == "eth0"
+    assert interfaces["interface"][1]["enabled"] == "false"
+    assert data["keystore"]["cleartext-private-key"] == REDACTED
 
 
 def _device(db_session: Session) -> Device:

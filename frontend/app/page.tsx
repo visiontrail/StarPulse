@@ -222,8 +222,11 @@ function DevicesTab() {
         api.getProfile(deviceId),
         api.listSnapshots(deviceId, 20)
       ]);
+      const latestSnapshot = snap.items[0]
+        ? await api.getSnapshot(deviceId, snap.items[0].id)
+        : null;
       setProfile(prof);
-      setSnapshots(snap.items);
+      setSnapshots(latestSnapshot ? [latestSnapshot, ...snap.items.slice(1)] : snap.items);
       setProfileState("loaded");
     } catch (e) {
       setProfileState("error");
@@ -242,6 +245,27 @@ function DevicesTab() {
     setPreflight(null);
     setLeafDrafts({});
   }, [loadProfile, selectedDeviceId]);
+
+  useEffect(() => {
+    if (selectedDeviceId === null) return;
+    const snapshot = snapshots.find((item) => item.datastore === datastore);
+    if (!snapshot || snapshot.config_tree !== undefined) return;
+    let cancelled = false;
+    api.getSnapshot(selectedDeviceId, snapshot.id)
+      .then((detail) => {
+        if (cancelled) return;
+        setSnapshots((current) => current.map((item) => (item.id === detail.id ? detail : item)));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSnapshots((current) =>
+          current.map((item) => (item.id === snapshot.id ? { ...item, config_tree: null } : item))
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [datastore, selectedDeviceId, snapshots]);
 
   const configTaskRunning = profile?.recent_tasks.some(
     (t) => t.task_type === "device.config_snapshot" && (t.status === "queued" || t.status === "running")
@@ -1006,7 +1030,13 @@ function ObjectTree({
   editablePath?: (path: string) => boolean;
 }) {
   const [openPaths, setOpenPaths] = useState<Set<string>>(
-    () => new Set(["root", "root.netconf_get", "root.netconf_edit_config"])
+    () => new Set([
+      "root",
+      "root.netconf_get",
+      "root.netconf_edit_config",
+      "root.netconf_edit_config.device_configuration",
+      "root.netconf_edit_config.device_configuration.data"
+    ])
   );
 
   function toggle(path: string) {
@@ -1208,9 +1238,20 @@ function buildConfigTree({
   leafDrafts: Record<string, string>;
   preflight: ChangePreflightResponse | null;
 }) {
-  const latest = snapshots[0] ?? device.last_config_snapshot ?? null;
+  const latestForDatastore =
+    snapshots.find((snapshot) => snapshot.datastore === datastore) ??
+    (device.last_config_snapshot?.datastore === datastore ? device.last_config_snapshot : null);
+  const latest = latestForDatastore ?? snapshots[0] ?? device.last_config_snapshot ?? null;
+  const deviceConfiguration = latest?.config_tree ?? {
+    unavailable: {
+      reason: latest ? "snapshot_content_tree_not_loaded" : "no_config_snapshot_collected",
+      snapshot_id: latest?.id ?? null,
+      datastore
+    }
+  };
   return {
     netconf_edit_config: {
+      device_configuration: deviceConfiguration,
       target: {
         device_id: device.id,
         datastore,

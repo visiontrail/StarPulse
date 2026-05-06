@@ -19,4 +19,5 @@ def redact_sensitive(value: object) -> object:
 
 def _is_sensitive_key(key: str) -> bool:
     lower_key = key.lower()
-    return any(part in lower_key for part in SENSITIVE_KEY_PARTS)
+    normalized_key = lower_key.replace("-", "_")
+    return any(part in normalized_key for part in SENSITIVE_KEY_PARTS)

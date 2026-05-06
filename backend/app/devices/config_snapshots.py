@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from xml.etree import ElementTree
 
 from sqlalchemy.orm import Session
 
-from app.common.redaction import redact_sensitive
+from app.common.redaction import REDACTED, redact_sensitive
 from app.devices.repository import DeviceRepository
 from app.netconf.services import NetconfOperationResult
 from app.storage.models import DeviceConfigSnapshot
@@ -117,6 +118,25 @@ class RollbackPayloadDeriver:
         )
 
 
+def build_config_object_tree(content: str | None) -> dict[str, object] | None:
+    if not content:
+        return None
+    try:
+        root = ElementTree.fromstring(content)
+    except ElementTree.ParseError:
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        return {
+            "unparsed_content": {
+                "format": "text",
+                "line_count": len(lines),
+                "content_length": len(content),
+            }
+        }
+    label = _local_name(root.tag)
+    tree = {label: _element_to_object(root, parent_namespace=None)}
+    return redact_sensitive(tree)  # type: ignore[return-value]
+
+
 def build_diff_summary(
     previous: DeviceConfigSnapshot | None, current_digest: str, collected_at: datetime
 ) -> dict[str, object]:
@@ -167,3 +187,55 @@ def _as_aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value
+
+
+def _element_to_object(
+    element: ElementTree.Element, *, parent_namespace: str | None
+) -> object:
+    namespace, _ = _split_tag(element.tag)
+    children = list(element)
+    attributes = {
+        _local_name(key): value
+        for key, value in sorted(element.attrib.items(), key=lambda item: _local_name(item[0]))
+    }
+    text = (element.text or "").strip()
+
+    if not children and not attributes:
+        return REDACTED if _is_sensitive_xml_key(element.tag) else text
+
+    node: dict[str, object] = {}
+    if namespace and namespace != parent_namespace:
+        node["_namespace"] = namespace
+    if attributes:
+        node["_attributes"] = redact_sensitive(attributes)  # type: ignore[assignment]
+    if text:
+        node["_text"] = REDACTED if _is_sensitive_xml_key(element.tag) else text
+
+    for child in children:
+        child_label = _local_name(child.tag)
+        child_value = _element_to_object(child, parent_namespace=namespace)
+        existing = node.get(child_label)
+        if existing is None:
+            node[child_label] = child_value
+        elif isinstance(existing, list):
+            existing.append(child_value)
+        else:
+            node[child_label] = [existing, child_value]
+    return node
+
+
+def _split_tag(tag: str) -> tuple[str | None, str]:
+    if tag.startswith("{") and "}" in tag:
+        namespace, local_name = tag[1:].split("}", 1)
+        return namespace, local_name
+    return None, tag
+
+
+def _local_name(tag: str) -> str:
+    return _split_tag(tag)[1]
+
+
+def _is_sensitive_xml_key(tag: str) -> bool:
+    key = _local_name(tag).lower().replace("-", "_")
+    sensitive_parts = ("password", "secret", "private_key", "passphrase", "credential")
+    return any(part in key for part in sensitive_parts)

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas.config_snapshot import (
     ConfigSnapshotCollectRequest,
+    ConfigSnapshotDetailRead,
     ConfigSnapshotListResponse,
     ConfigSnapshotSummaryRead,
 )
@@ -26,6 +27,7 @@ from app.auth.constants import (
     AuditOutcome,
 )
 from app.auth.dependencies import CurrentUserDep, SessionDep, require_permission
+from app.devices.config_snapshots import build_config_object_tree
 from app.devices.constants import SUPPORTED_CONFIG_DATASTORES, DeviceTaskStatus, DeviceTaskType
 from app.devices.repository import DeviceRepository
 from app.devices.service import (
@@ -251,20 +253,20 @@ def list_config_snapshots(
 
 @router.get(
     "/{device_id}/config-snapshots/{snapshot_id}",
-    response_model=ConfigSnapshotSummaryRead,
+    response_model=ConfigSnapshotDetailRead,
     dependencies=[require_permission(PERM_SNAPSHOT_READ)],
 )
 def get_config_snapshot(
     device_id: int,
     snapshot_id: int,
     session: SessionDep,
-) -> ConfigSnapshotSummaryRead:
+) -> ConfigSnapshotDetailRead:
     _ensure_device_exists(device_id, session)
     repository = DeviceRepository(session)
     snapshot = repository.get_snapshot_by_id(snapshot_id)
     if snapshot is None or snapshot.device_id != device_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found")
-    return _snapshot_read(snapshot, repository)
+    return _snapshot_detail_read(snapshot, repository)
 
 
 @router.delete(
@@ -529,6 +531,19 @@ def _snapshot_read(
     return ConfigSnapshotSummaryRead.from_snapshot(
         snapshot,
         source_task_succeeded=repository.is_successful_snapshot_source(snapshot),
+    )
+
+
+def _snapshot_detail_read(
+    snapshot: DeviceConfigSnapshot,
+    repository: DeviceRepository,
+) -> ConfigSnapshotDetailRead:
+    summary = _snapshot_read(snapshot, repository)
+    return ConfigSnapshotDetailRead.model_validate(
+        summary.model_dump()
+        | {
+            "config_tree": build_config_object_tree(snapshot.normalized_content),
+        }
     )
 
 

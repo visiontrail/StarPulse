@@ -236,6 +236,7 @@ export type ConfigSnapshot = {
   collected_at: string;
   diff_summary: Record<string, unknown>;
   summary: Record<string, unknown>;
+  config_tree?: Record<string, unknown> | null;
   rollback_eligible: boolean;
   rollback_blocker: string | null;
 };
