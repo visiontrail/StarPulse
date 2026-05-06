@@ -20,7 +20,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
-  PlayCircle,
   RefreshCw,
   Router,
   Search,
@@ -28,7 +27,6 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
-  TerminalSquare,
   Users,
   XCircle
 } from "lucide-react";
@@ -46,7 +44,6 @@ import type {
   ConfigSnapshot,
   Device,
   DeviceProfile,
-  OnboardingStepSummary,
   Permission,
   Role,
   SnapshotListResponse,
@@ -270,40 +267,6 @@ function DevicesTab() {
     }
   }
 
-  async function clearStaleTasks() {
-    if (!selectedDeviceId) return;
-    setSubmitState("loading");
-    setError(null);
-    try {
-      await api.abandonStaleTasks(selectedDeviceId);
-      await loadProfile(selectedDeviceId);
-      setSubmitState("loaded");
-    } catch (e) {
-      setSubmitState("error");
-      setError(errorMessage(e));
-    }
-  }
-
-  async function runOnboardingTask(step: "connection" | "discovery" | "baseline") {
-    if (!selectedDeviceId) return;
-    setSubmitState("loading");
-    setError(null);
-    try {
-      const task =
-        step === "connection"
-          ? await api.submitConnectionTest(selectedDeviceId)
-          : step === "discovery"
-            ? await api.submitCapabilityDiscovery(selectedDeviceId)
-            : await api.collectSnapshot(selectedDeviceId, datastore);
-      setLastTask(task);
-      await loadProfile(selectedDeviceId);
-      setSubmitState("loaded");
-    } catch (e) {
-      setSubmitState("error");
-      setError(errorMessage(e));
-    }
-  }
-
   async function previewConfigChange() {
     if (!selectedDeviceId || !canSubmitChange) return;
     setChangeSubmitState("loading");
@@ -402,7 +365,6 @@ function DevicesTab() {
             loading={profileState === "loading"}
             error={error}
             canCollect={canCollect}
-            canManage={canManage}
             canSubmitChange={canSubmitChange}
             canApprove={hasPermission(PERM.DEVICE_CHANGE_APPROVE)}
             readyForChange={readyForChange}
@@ -419,8 +381,6 @@ function DevicesTab() {
             onDatastoreChange={setDatastore}
             onRefresh={() => void loadProfile(selectedDevice.id)}
             onCollect={() => void submitSnapshot()}
-            onRunOnboarding={(step) => void runOnboardingTask(step)}
-            onClearStale={() => void clearStaleTasks()}
             onSelectPath={setSelectedObjectPath}
             onChangeSummaryChange={(value) => {
               setChangeSummary(value);
@@ -626,48 +586,72 @@ function DeviceInventoryTable({
 }) {
   return (
     <div className="overflow-x-auto rounded border border-warm">
-      <table className="w-full min-w-[980px] border-collapse text-sm">
+      <table className="w-full min-w-[1180px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-warm bg-paper/70 text-left font-mono text-[11px] uppercase text-muted">
             <th className="px-3 py-2 font-medium">Device</th>
             <th className="px-3 py-2 font-medium">Status</th>
             <th className="px-3 py-2 font-medium">Endpoint</th>
-            <th className="px-3 py-2 font-medium">Group</th>
-            <th className="px-3 py-2 font-medium">Serial</th>
+            <th className="px-3 py-2 font-medium">Access</th>
             <th className="px-3 py-2 font-medium">Discovery</th>
-            <th className="px-3 py-2 font-medium">Snapshot</th>
+            <th className="px-3 py-2 font-medium">Onboarding</th>
+            <th className="px-3 py-2 font-medium">Baseline</th>
             <th className="px-3 py-2 font-medium">Updated</th>
           </tr>
         </thead>
         <tbody>
-          {devices.map((device) => (
-            <tr
-              key={device.id}
-              onClick={() => onSelect(device.id)}
-              className={cn(
-                "cursor-pointer border-b border-warm/70 transition last:border-0 hover:bg-paper",
-                device.id === selectedDeviceId && "bg-surface-soft"
-              )}
-            >
-              <td className="px-3 py-3">
-                <p className="max-w-[220px] truncate font-semibold">{device.name}</p>
-                <p className="font-mono text-[11px] text-muted">#{device.id}</p>
-              </td>
-              <td className="px-3 py-3"><StatusBadge status={device.status} /></td>
-              <td className="px-3 py-3 font-mono text-xs text-muted">
-                {device.connection
-                  ? `${device.connection.protocol}://${device.connection.host}:${device.connection.port}`
-                  : "-"}
-              </td>
-              <td className="px-3 py-3 text-xs text-muted">{device.group ?? "-"}</td>
-              <td className="px-3 py-3 font-mono text-xs text-muted">{device.serial_number ?? "-"}</td>
-              <td className="px-3 py-3 text-xs text-muted">{summaryValue(device.last_discovery?.summary)}</td>
-              <td className="px-3 py-3 font-mono text-xs text-muted">
-                {digestShort(device.last_config_snapshot?.content_digest)}
-              </td>
-              <td className="px-3 py-3 text-xs text-muted">{formatDate(device.updated_at)}</td>
-            </tr>
-          ))}
+          {devices.map((device) => {
+            const connection = device.connection;
+            const discovery = device.last_discovery;
+            const onboarding = device.onboarding_summary;
+            return (
+              <tr
+                key={device.id}
+                onClick={() => onSelect(device.id)}
+                className={cn(
+                  "cursor-pointer border-b border-warm/70 transition last:border-0 hover:bg-paper",
+                  device.id === selectedDeviceId && "bg-surface-soft"
+                )}
+              >
+                <td className="px-3 py-3">
+                  <p className="max-w-[220px] truncate font-semibold">{device.name}</p>
+                  <p className="mt-1 font-mono text-[11px] text-muted">#{device.id} · {device.group ?? "ungrouped"}</p>
+                  <p className="mt-1 truncate font-mono text-[11px] text-muted">
+                    SN {device.serial_number ?? "-"}
+                  </p>
+                </td>
+                <td className="px-3 py-3"><StatusBadge status={device.status} /></td>
+                <td className="px-3 py-3 font-mono text-xs text-muted">
+                  {connection
+                    ? `${connection.protocol}://${connection.host}:${connection.port}`
+                    : "-"}
+                </td>
+                <td className="px-3 py-3 text-xs text-muted">
+                  <p className="font-mono">{connection?.username ?? "-"}</p>
+                  <p className="mt-1">{connection?.has_credential ? "credential referenced" : "credential missing"}</p>
+                </td>
+                <td className="px-3 py-3 text-xs text-muted">
+                  <p>{discovery ? `${discovery.capabilities.length} caps` : "-"}</p>
+                  <p className="mt-1">{discovery ? `${Object.keys(discovery.system_info).length} system keys` : "-"}</p>
+                  <p className="mt-1">{discovery ? formatDate(discovery.discovered_at) : "-"}</p>
+                </td>
+                <td className="px-3 py-3 text-xs text-muted">
+                  <div className="mb-2">
+                    <StatusBadge status={onboarding ? (onboarding.ready_for_change ? "ready" : "blocked") : "not_started"} />
+                  </div>
+                  <p>{onboardingSteps(onboarding)}</p>
+                  <p className="mt-1 truncate" title={onboardingDetail(onboarding)}>
+                    {onboardingDetail(onboarding)}
+                  </p>
+                </td>
+                <td className="px-3 py-3 text-xs text-muted">
+                  <p className="font-mono">{digestShort(device.last_config_snapshot?.content_digest)}</p>
+                  <p className="mt-1">{device.last_config_snapshot ? formatDate(device.last_config_snapshot.collected_at) : "-"}</p>
+                </td>
+                <td className="px-3 py-3 text-xs text-muted">{formatDate(device.updated_at)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -684,7 +668,6 @@ function DeviceWorkspace({
   loading,
   error,
   canCollect,
-  canManage,
   canSubmitChange,
   canApprove,
   readyForChange,
@@ -701,8 +684,6 @@ function DeviceWorkspace({
   onDatastoreChange,
   onRefresh,
   onCollect,
-  onRunOnboarding,
-  onClearStale,
   onSelectPath,
   onChangeSummaryChange,
   onChangeReasonChange,
@@ -721,7 +702,6 @@ function DeviceWorkspace({
   loading: boolean;
   error: string | null;
   canCollect: boolean;
-  canManage: boolean;
   canSubmitChange: boolean;
   canApprove: boolean;
   readyForChange: boolean;
@@ -738,8 +718,6 @@ function DeviceWorkspace({
   onDatastoreChange: (datastore: string) => void;
   onRefresh: () => void;
   onCollect: () => void;
-  onRunOnboarding: (step: "connection" | "discovery" | "baseline") => void;
-  onClearStale: () => void;
   onSelectPath: (path: string) => void;
   onChangeSummaryChange: (value: string) => void;
   onChangeReasonChange: (value: string) => void;
@@ -851,25 +829,14 @@ function DeviceWorkspace({
 
       {detailMode === "operational" ? (
         <div className="grid min-h-0 flex-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_clamp(320px,27vw,440px)]">
-          <div className="min-h-0 space-y-3">
-            <ProfileGrid profile={profile} loading={loading} />
-            <InfoPanel icon={<Settings2 />} title="NETCONF Object Tree">
-              <ObjectTree
-                data={operationalTree}
-                selectedPath={selectedPath}
-                onSelectPath={onSelectPath}
-              />
-            </InfoPanel>
-          </div>
-          <aside className="space-y-3">
-            <OnboardingPanel
-              profile={profile}
-              canCollect={canCollect}
-              canManage={canManage}
-              busy={submitBusy}
-              onRun={onRunOnboarding}
-              onClearStale={onClearStale}
+          <InfoPanel icon={<Settings2 />} title="NETCONF Object Tree">
+            <ObjectTree
+              data={operationalTree}
+              selectedPath={selectedPath}
+              onSelectPath={onSelectPath}
             />
+          </InfoPanel>
+          <aside className="space-y-3">
             <ReadOnlyPanel
               profile={profile}
               lastTask={lastTask}
@@ -2478,94 +2445,6 @@ function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Prom
   );
 }
 
-function OnboardingPanel({
-  profile,
-  canCollect,
-  canManage,
-  busy,
-  onRun,
-  onClearStale
-}: {
-  profile: DeviceProfile | null;
-  canCollect: boolean;
-  canManage: boolean;
-  busy: boolean;
-  onRun: (step: "connection" | "discovery" | "baseline") => void;
-  onClearStale: () => void;
-}) {
-  const summary = profile?.onboarding_summary;
-  const hasStuckTasks = summary
-    ? [summary.connection, summary.discovery, summary.baseline].some(
-        (s) => s.status === "queued" || s.status === "running"
-      )
-    : false;
-
-  return (
-    <InfoPanel icon={<PlayCircle />} title="Onboarding">
-      {summary ? (
-        <div className="space-y-3">
-          <div className="grid gap-2">
-            <OnboardingStep label="Connection" step={summary.connection} />
-            <OnboardingStep label="Discovery" step={summary.discovery} />
-            <OnboardingStep label="Baseline" step={summary.baseline} />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() => onRun("connection")}
-              disabled={!canCollect || busy}
-              busy={busy && summary.next_action === "run_connection_test"}
-              className="h-8 px-2 text-xs"
-            >
-              Test
-            </Button>
-            <Button
-              onClick={() => onRun("discovery")}
-              disabled={!canCollect || busy}
-              busy={busy && summary.next_action === "run_capability_discovery"}
-              className="h-8 px-2 text-xs"
-            >
-              Discover
-            </Button>
-            <Button
-              onClick={() => onRun("baseline")}
-              disabled={!canCollect || busy}
-              busy={busy && summary.next_action === "collect_baseline_snapshot"}
-              className="h-8 px-2 text-xs"
-            >
-              Baseline
-            </Button>
-            {hasStuckTasks && canManage ? (
-              <Button
-                onClick={onClearStale}
-                disabled={busy}
-                className="h-8 px-2 text-xs bg-paper border border-warm text-warning"
-                title="Clear tasks stuck in QUEUED/RUNNING state (e.g. after a worker restart)"
-              >
-                <XCircle className="h-3.5 w-3.5" /> Clear Stuck
-              </Button>
-            ) : null}
-          </div>
-          <StatusBadge status={summary.ready_for_change ? "ready" : "blocked"} />
-          {summary.blockers.length > 0 ? (
-            <p className="text-xs text-muted">{summary.blockers.join(", ")}</p>
-          ) : null}
-        </div>
-      ) : (
-        <p className="text-sm text-muted">Profile unavailable</p>
-      )}
-    </InfoPanel>
-  );
-}
-
-function OnboardingStep({ label, step }: { label: string; step: OnboardingStepSummary }) {
-  return (
-    <div className="flex items-center justify-between gap-2 rounded border border-warm bg-paper px-2 py-1.5">
-      <span className="text-xs font-medium">{label}</span>
-      <StatusBadge status={step.status} />
-    </div>
-  );
-}
-
 function PreflightSummary({
   preflight,
   compact = false
@@ -2648,33 +2527,6 @@ function DeviceListItem({
         <Metric label="Snapshot" value={digestShort(device.last_config_snapshot?.content_digest)} />
       </div>
     </button>
-  );
-}
-
-function ProfileGrid({ profile, loading }: { profile: DeviceProfile | null; loading: boolean }) {
-  if (loading && profile === null) return <PanelSkeleton />;
-  if (profile === null) return <EmptyState icon={<Gauge className="h-6 w-6" />} title="Profile unavailable" />;
-  const connection = profile.connection;
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <InfoPanel icon={<TerminalSquare />} title="Connection">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Metric label="Host" value={connection?.host ?? "-"} />
-          <Metric label="Port" value={connection?.port ?? "-"} />
-          <Metric label="Protocol" value={connection?.protocol ?? "-"} />
-          <Metric label="User" value={connection?.username ?? "-"} />
-          <Metric label="Credential" value={connection?.has_credential ? "referenced" : "missing"} />
-          <Metric label="Serial" value={profile.serial_number ?? "-"} />
-        </div>
-      </InfoPanel>
-      <InfoPanel icon={<Sparkles />} title="Discovery">
-        <div className="grid gap-3">
-          <Metric label="Capabilities" value={profile.capabilities.length} />
-          <Metric label="System" value={Object.keys(profile.system_info).length} />
-          <CodeList items={profile.capabilities.slice(0, 5)} empty="No capabilities" />
-        </div>
-      </InfoPanel>
-    </div>
   );
 }
 
@@ -2852,38 +2704,11 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function CodeList({ items, empty }: { items: string[]; empty: string }) {
-  if (items.length === 0) return <p className="text-sm text-muted">{empty}</p>;
-  return (
-    <div className="flex flex-wrap gap-2">
-      {items.map((item) => (
-        <span
-          key={item}
-          className="max-w-full truncate rounded border border-warm bg-paper px-2 py-1 font-mono text-[11px] text-muted"
-          title={item}
-        >
-          {item}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 function DeviceListSkeleton() {
   return (
     <div className="space-y-2">
       {[0, 1, 2].map((i) => (
         <div key={i} className="h-24 animate-pulse rounded border border-warm bg-paper" />
-      ))}
-    </div>
-  );
-}
-
-function PanelSkeleton() {
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {[0, 1].map((i) => (
-        <div key={i} className="h-44 animate-pulse rounded border border-warm bg-surface" />
       ))}
     </div>
   );
@@ -2907,6 +2732,26 @@ function summaryValue(summary: Record<string, unknown> | undefined) {
   if (!summary) return "-";
   if (typeof summary.capability_count === "number") return `${summary.capability_count} caps`;
   return "ready";
+}
+
+function onboardingSteps(summary: Device["onboarding_summary"]) {
+  if (!summary) return "-";
+  return [
+    `C ${compactStatus(summary.connection.status)}`,
+    `D ${compactStatus(summary.discovery.status)}`,
+    `B ${compactStatus(summary.baseline.status)}`
+  ].join(" · ");
+}
+
+function onboardingDetail(summary: Device["onboarding_summary"]) {
+  if (!summary) return "Profile unavailable";
+  if (summary.blockers.length > 0) return summary.blockers.join(", ");
+  if (summary.next_action) return summary.next_action.replaceAll("_", " ");
+  return summary.ready_for_change ? "Ready for change" : "Waiting for onboarding";
+}
+
+function compactStatus(status: string) {
+  return status.replaceAll("_", " ");
 }
 
 function digestShort(digest: string | undefined) {
