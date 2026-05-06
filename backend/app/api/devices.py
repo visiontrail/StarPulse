@@ -33,7 +33,7 @@ from app.devices.service import (
     DeviceCredentialUnavailableError,
     DeviceService,
 )
-from app.storage.models import Device, TaskStatus
+from app.storage.models import Device, DeviceConfigSnapshot, TaskStatus
 from app.tasks.service import TaskService
 
 router = APIRouter(prefix="/devices", tags=["devices"])
@@ -238,14 +238,33 @@ def list_config_snapshots(
     offset: int = Query(default=0, ge=0),
 ) -> ConfigSnapshotListResponse:
     _ensure_device_exists(device_id, session)
-    snapshots = DeviceRepository(session).list_config_snapshots(
+    repository = DeviceRepository(session)
+    snapshots = repository.list_config_snapshots(
         device_id=device_id, limit=limit, offset=offset
     )
     return ConfigSnapshotListResponse(
-        items=[ConfigSnapshotSummaryRead.model_validate(snapshot) for snapshot in snapshots],
+        items=[_snapshot_read(snapshot, repository) for snapshot in snapshots],
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/{device_id}/config-snapshots/{snapshot_id}",
+    response_model=ConfigSnapshotSummaryRead,
+    dependencies=[require_permission(PERM_SNAPSHOT_READ)],
+)
+def get_config_snapshot(
+    device_id: int,
+    snapshot_id: int,
+    session: SessionDep,
+) -> ConfigSnapshotSummaryRead:
+    _ensure_device_exists(device_id, session)
+    repository = DeviceRepository(session)
+    snapshot = repository.get_snapshot_by_id(snapshot_id)
+    if snapshot is None or snapshot.device_id != device_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found")
+    return _snapshot_read(snapshot, repository)
 
 
 @router.get(
@@ -365,7 +384,7 @@ def _device_read(
     return DeviceRead.model_validate(device).model_copy(
         update={
             "last_config_snapshot": (
-                ConfigSnapshotSummaryRead.model_validate(last_snapshot)
+                _snapshot_read(last_snapshot, repository)
                 if last_snapshot is not None
                 else None
             ),
@@ -391,15 +410,18 @@ def _device_read(
                 }
                 for task in recent_tasks
             ],
-            "onboarding_summary": _onboarding_summary(device, last_snapshot, recent_tasks),
+            "onboarding_summary": _onboarding_summary(
+                device, last_snapshot, recent_tasks, repository
+            ),
         }
     )
 
 
 def _onboarding_summary(
     device: Device,
-    last_snapshot: object | None,
+    last_snapshot: DeviceConfigSnapshot | None,
     recent_tasks: list[TaskStatus],
+    repository: DeviceRepository,
 ) -> DeviceOnboardingSummary:
     connection_task = _latest_task(recent_tasks, DeviceTaskType.CONNECTION_TEST)
     discovery_task = _latest_task(recent_tasks, DeviceTaskType.CAPABILITY_DISCOVERY)
@@ -444,7 +466,7 @@ def _onboarding_summary(
                 fallback_status="succeeded" if baseline_ok else "not_started",
             ),
             "baseline_snapshot": (
-                ConfigSnapshotSummaryRead.model_validate(last_snapshot) if last_snapshot else None
+                _snapshot_read(last_snapshot, repository) if last_snapshot else None
             ),
             "ready_for_change": ready_for_change,
             "blockers": blockers,
@@ -458,6 +480,16 @@ def _latest_task(recent_tasks: list[TaskStatus], task_type: DeviceTaskType) -> T
         if task.task_type == task_type:
             return task
     return None
+
+
+def _snapshot_read(
+    snapshot: DeviceConfigSnapshot,
+    repository: DeviceRepository,
+) -> ConfigSnapshotSummaryRead:
+    return ConfigSnapshotSummaryRead.from_snapshot(
+        snapshot,
+        source_task_succeeded=repository.is_successful_snapshot_source(snapshot),
+    )
 
 
 def _step_summary(task: TaskStatus | None, *, fallback_status: str) -> dict[str, object]:

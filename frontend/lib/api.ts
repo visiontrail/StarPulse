@@ -32,9 +32,22 @@ export class ApiError extends Error {
   }
 }
 
+const ROLLBACK_BLOCKER_MESSAGES: Record<string, string> = {
+  CHANGE_IN_FLIGHT: "Another change is already in progress for this device/datastore. Wait for it to complete.",
+  ROLLBACK_TARGET_NOT_RESTORABLE: "This snapshot cannot be used as a rollback target (normalized content not available).",
+  ROLLBACK_NO_DIVERGENCE: "The device is already at the state of the target snapshot — no rollback needed.",
+  ROLLBACK_ORIGIN_NOT_RECOVERABLE: "The origin change is not in a recoverable state (must be verification_failed or failed).",
+};
+
+export function formatRollbackBlocker(blocker: string): string {
+  return ROLLBACK_BLOCKER_MESSAGES[blocker] ?? blocker;
+}
+
 export function formatApiError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.blockers.length > 0) return error.blockers.join(", ");
+    if (error.blockers.length > 0) {
+      return error.blockers.map((b) => ROLLBACK_BLOCKER_MESSAGES[b] ?? b).join("; ");
+    }
     return error.message;
   }
   if (error instanceof Error) return error.message;
@@ -136,9 +149,14 @@ function errorBlockers(detail: unknown): string[] {
       ? (detail as { blockers?: unknown }).blockers
       : null;
   if (Array.isArray(blockers)) return blockers.filter((item) => typeof item === "string");
-  if (message?.startsWith("Change preflight failed: ")) {
+  const preflightPrefix = message?.startsWith("Rollback preflight failed: ")
+    ? "Rollback preflight failed: "
+    : message?.startsWith("Change preflight failed: ")
+      ? "Change preflight failed: "
+      : null;
+  if (message && preflightPrefix) {
     return message
-      .replace("Change preflight failed: ", "")
+      .replace(preflightPrefix, "")
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
@@ -252,6 +270,10 @@ export const api = {
     request<TaskRead>(`/devices/${deviceId}/capability-discovery`, { method: "POST" }),
   listSnapshots: (deviceId: number, limit = 20) =>
     request<SnapshotListResponse>(`/devices/${deviceId}/config-snapshots?limit=${limit}`),
+  getSnapshot: (deviceId: number, snapshotId: number) =>
+    request<SnapshotListResponse["items"][number]>(
+      `/devices/${deviceId}/config-snapshots/${snapshotId}`
+    ),
   collectSnapshot: (deviceId: number, datastore: string) =>
     request<TaskRead>(`/devices/${deviceId}/config-snapshots`, {
       method: "POST",
@@ -301,10 +323,58 @@ export const api = {
     change_ref?: string;
     config_body?: string;
     reason: string;
+    mode?: "forward" | "rollback";
+    rollback_target_snapshot_id?: number;
+    rollback_of_change_id?: number;
   }) =>
     request<ChangePreflightResponse>("/change-requests/preflight", {
       method: "POST",
       body: JSON.stringify(payload)
+    }),
+
+  previewRollbackPreflight: (payload: {
+    device_id: number;
+    datastore: string;
+    reason: string;
+    rollback_target_snapshot_id: number;
+    rollback_of_change_id?: number;
+  }) =>
+    request<ChangePreflightResponse>("/change-requests/preflight", {
+      method: "POST",
+      body: JSON.stringify({ ...payload, mode: "rollback" })
+    }),
+
+  submitRollback: (payload: {
+    device_id: number;
+    datastore: string;
+    change_summary: string;
+    reason: string;
+    rollback_target_snapshot_id: number;
+    rollback_of_change_id?: number;
+  }) =>
+    request<ChangeRequestRead>("/change-requests/rollback", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+
+  rollbackDirectExecute: (payload: {
+    device_id: number;
+    datastore: string;
+    change_summary: string;
+    reason: string;
+    rollback_target_snapshot_id: number;
+    rollback_of_change_id?: number;
+  }) =>
+    request<ChangeRequestRead>("/change-requests/rollback-execute", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+
+  getRollbackProposal: (changeId: number) =>
+    request<ChangeRequestRead>(`/change-requests/${changeId}`).then((cr) => {
+      const proposalId = cr.pending_rollback_proposal_id;
+      if (!proposalId) return null;
+      return request<ChangeRequestRead>(`/change-requests/${proposalId}`);
     }),
   listChangeRequests: (status?: string) =>
     request<ChangeRequestListResponse>(

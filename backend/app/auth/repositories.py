@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from hashlib import sha256
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -189,11 +190,25 @@ class ChangeRequestRepository:
         return self.save(cr)
 
     def create_payload(
-        self, change_request_id: int, config_body: str
+        self,
+        change_request_id: int,
+        config_body: str,
+        *,
+        body_digest: str | None = None,
+        body_length: int | None = None,
+        line_count: int | None = None,
+        summary_source: str | None = None,
     ) -> DeviceConfigChangePayload:
+        body_digest = body_digest or "sha256:" + sha256(config_body.encode("utf-8")).hexdigest()
+        body_length = body_length if body_length is not None else len(config_body)
+        line_count = line_count if line_count is not None else len(config_body.splitlines())
         payload = DeviceConfigChangePayload(
             change_request_id=change_request_id,
             config_body=config_body,
+            body_digest=body_digest,
+            body_length=body_length,
+            line_count=line_count,
+            summary_source=summary_source,
         )
         self.session.add(payload)
         self.session.flush()
@@ -204,6 +219,30 @@ class ChangeRequestRepository:
             select(DeviceConfigChangePayload).where(
                 DeviceConfigChangePayload.change_request_id == change_request_id
             )
+        )
+
+    def find_pending_rollback_proposal(
+        self, rollback_of_change_id: int
+    ) -> DeviceConfigChangeRequest | None:
+        return self.session.scalar(
+            select(DeviceConfigChangeRequest).where(
+                DeviceConfigChangeRequest.rollback_of_change_id == rollback_of_change_id,
+                DeviceConfigChangeRequest.is_rollback.is_(True),
+                DeviceConfigChangeRequest.status == "pending_approval",
+            )
+        )
+
+    def find_latest_rollback_proposal(
+        self, rollback_of_change_id: int
+    ) -> DeviceConfigChangeRequest | None:
+        return self.session.scalar(
+            select(DeviceConfigChangeRequest)
+            .where(
+                DeviceConfigChangeRequest.rollback_of_change_id == rollback_of_change_id,
+                DeviceConfigChangeRequest.is_rollback.is_(True),
+            )
+            .order_by(DeviceConfigChangeRequest.id.desc())
+            .limit(1)
         )
 
 

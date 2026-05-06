@@ -111,6 +111,6 @@ Celery 任务已完成：标记 `running`、调用 `edit-config`、标记 `verif
 
 ## 开放问题
 
-- **Q1.** 自动提案的回滚申请应归因于专用的 `system:rollback-proposer` 操作者，还是带"系统代表 <用户> 提案"注释的原始变更操作者？倾向于专用系统操作者 + `originated_for_user_id` 元数据，因为人工操作者并未授权该提案——但这影响审计报表，需在锁定 tasks.md 前确认。
-- **Q2.** 当前 `DeviceConfigSnapshot` 记录是否持久化了可直接传给 `edit-config` 的规范化内容（字节），还是仅有摘要+受控汇总？任务中包含显式验证步骤；若内容未持久化，需增加一个早期任务，仅对满足条件的快照新增规范化内容存储。
-- **Q3.** `rollback_of_change_id` 是否允许链式（回滚的回滚）？当前设计允许（无特殊限制，仅来源状态检查），但对回滚的回滚显式禁用自动提案（D5）。在锁定任务前确认是否符合运维预期。
+- **Q1. 已决定：** 自动提案的 `actor_user_id = None`（系统操作者），审计 metadata 中通过 `originated_for_user_id` 记录来源变更的原始操作者。
+- **Q2. 已决定：** 当前 `DeviceConfigSnapshot` 仅存储 `content_digest`，不存储规范化内容。`NetconfOperationResult.normalized_content` 已在 `read_config` 中生成但未被持久化。本变更在 `device_config_snapshots` 表新增 `normalized_content` 列，并在 `ConfigSnapshotService.save_read_result` 中写入。历史快照 `normalized_content = NULL`，因此 `rollback_eligible = false`。
+- **Q3. 已决定：** 允许链式回滚（回滚的回滚），仅对 `is_rollback = true` 的变更验证失败时禁用自动提案递归（D5 策略）。

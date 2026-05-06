@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,6 +20,25 @@ class ConfigSnapshotSummaryRead(BaseModel):
     collected_at: datetime
     diff_summary: dict[str, object]
     summary: dict[str, object]
+    rollback_eligible: bool = False
+    rollback_blocker: str | None = None
+
+    @classmethod
+    def from_snapshot(
+        cls, snapshot: Any, *, source_task_succeeded: bool = True
+    ) -> ConfigSnapshotSummaryRead:
+        eligible = bool(getattr(snapshot, "normalized_content", None)) and source_task_succeeded
+        return cls(
+            id=snapshot.id,
+            source_task_id=snapshot.source_task_id,
+            datastore=snapshot.datastore,
+            content_digest=snapshot.content_digest,
+            collected_at=snapshot.collected_at,
+            diff_summary=snapshot.diff_summary,
+            summary=snapshot.summary,
+            rollback_eligible=eligible,
+            rollback_blocker=None if eligible else "ROLLBACK_TARGET_NOT_RESTORABLE",
+        )
 
 
 class ConfigSnapshotListResponse(BaseModel):

@@ -191,6 +191,17 @@ class SnapshotReferenceRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ChangeRequestReferenceRead(BaseModel):
+    id: int
+    device_id: int
+    datastore: str
+    change_summary: str
+    status: str
+    is_rollback: bool = False
+
+    model_config = {"from_attributes": True}
+
+
 class ChangePayloadSummary(BaseModel):
     digest: str
     length: int
@@ -216,6 +227,9 @@ class ChangePreflightRequest(BaseModel):
     change_ref: str | None = None
     config_body: str | None = Field(default=None, min_length=1)
     reason: str = Field(min_length=1)
+    mode: str = "forward"
+    rollback_target_snapshot_id: int | None = None
+    rollback_of_change_id: int | None = None
 
 
 class ChangePreflightResponse(BaseModel):
@@ -229,6 +243,8 @@ class ChangePreflightResponse(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     recommended_action: str | None = None
     risk_summary: ChangeRiskSummary | None = None
+    mode: str = "forward"
+    rollback_target_snapshot: SnapshotReferenceRead | None = None
 
 
 class ChangeVerificationSummary(BaseModel):
@@ -270,6 +286,13 @@ class ChangeRequestRead(BaseModel):
     verified_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    is_rollback: bool = False
+    rollback_of_change_id: int | None = None
+    rollback_of_change: ChangeRequestReferenceRead | None = None
+    rollback_target_snapshot_id: int | None = None
+    rollback_target_snapshot: SnapshotReferenceRead | None = None
+    pending_rollback_proposal_id: int | None = None
+    pending_rollback_proposal: ChangeRequestReferenceRead | None = None
 
     model_config = {"from_attributes": True}
 
@@ -278,3 +301,21 @@ class ChangeRequestListResponse(BaseModel):
     items: list[ChangeRequestRead]
     limit: int
     offset: int
+
+
+class RollbackSubmitRequest(BaseModel):
+    device_id: int
+    datastore: str
+    change_summary: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    rollback_target_snapshot_id: int
+    rollback_of_change_id: int | None = None
+
+
+class RollbackDirectExecuteRequest(BaseModel):
+    device_id: int
+    datastore: str
+    change_summary: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    rollback_target_snapshot_id: int
+    rollback_of_change_id: int | None = None

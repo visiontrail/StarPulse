@@ -25,12 +25,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { LoginView, SessionHeader } from "@/components/auth";
 import { Button, DatastoreSelect, EmptyState, FieldLabel, StatusBadge } from "@/components/ui";
-import { api, formatApiError } from "@/lib/api";
+import { api, formatApiError, formatRollbackBlocker } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import type {
   AuditLogRead,
   ChangePreflightResponse,
   ChangeRequestRead,
+  ChangeRiskSummary,
   ConfigSnapshot,
   Device,
   DeviceProfile,
@@ -347,7 +348,10 @@ function DevicesTab() {
                 <SnapshotTable
                   snapshots={snapshots}
                   canSubmitChange={canSubmitChange}
+                  canApprove={hasPermission(PERM.DEVICE_CHANGE_APPROVE)}
+                  deviceId={selectedDeviceId ?? undefined}
                   onStartChange={(snapshot) => setDatastore(snapshot.datastore)}
+                  onRollbackSuccess={() => { void loadProfile(selectedDeviceId!); }}
                 />
               </div>
               <div className="space-y-4">
@@ -435,6 +439,28 @@ function ChangesTab() {
     }
   }
 
+  async function handleManualRollback(cr: ChangeRequestRead) {
+    if (!cr.baseline_snapshot_id) {
+      setError("No baseline snapshot is available for rollback.");
+      return;
+    }
+    const reason = window.prompt("Rollback proposal reason:");
+    if (!reason?.trim()) return;
+    try {
+      await api.submitRollback({
+        device_id: cr.device_id,
+        datastore: cr.datastore,
+        change_summary: `Rollback proposal for change #${cr.id}`,
+        reason,
+        rollback_target_snapshot_id: cr.baseline_snapshot_id,
+        rollback_of_change_id: cr.id
+      });
+      await loadChanges();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <div className="flex items-center justify-between">
@@ -461,14 +487,23 @@ function ChangesTab() {
 
       <div className="space-y-3">
         {changes.map((cr) => (
-          <div key={cr.id} className="rounded border border-warm bg-canvas/95 p-4">
+          <div
+            key={cr.id}
+            id={`change-${cr.id}`}
+            className="rounded border border-warm bg-canvas/95 p-4 scroll-mt-20"
+          >
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge status={cr.status} />
                   {cr.direct_execute && (
                     <span className="rounded bg-warning/20 px-2 py-0.5 font-mono text-[11px] text-warning">
                       direct-execute
+                    </span>
+                  )}
+                  {cr.is_rollback && (
+                    <span className="rounded bg-info/20 px-2 py-0.5 font-mono text-[11px] text-info flex items-center gap-1">
+                      <ListRestart className="h-3 w-3" /> rollback
                     </span>
                   )}
                   <span className="font-mono text-xs text-muted">#{cr.id}</span>
@@ -491,6 +526,76 @@ function ChangesTab() {
                       `Post-change snapshot ${cr.verification_snapshot_id ?? "-"}`}
                   </p>
                 ) : null}
+
+                {/* Rollback context card (Task 9.4) */}
+                {cr.is_rollback && (
+                  <div className="mt-3 rounded border border-info/30 bg-info/10 p-3 text-xs space-y-1">
+                    <p className="font-semibold text-info flex items-center gap-1">
+                      <ListRestart className="h-3.5 w-3.5" /> Rollback Context
+                    </p>
+                    {cr.rollback_of_change_id ? (
+                      <p className="text-muted">
+                        Origin change:{" "}
+                        <a className="font-mono underline" href={`#change-${cr.rollback_of_change_id}`}>
+                          #{cr.rollback_of_change_id}
+                        </a>
+                        {cr.rollback_of_change ? ` · ${cr.rollback_of_change.status}` : ""}
+                      </p>
+                    ) : null}
+                    {cr.rollback_target_snapshot_id ? (
+                      <p className="text-muted">Target snapshot: <span className="font-mono">#{cr.rollback_target_snapshot_id}</span>
+                        {cr.rollback_target_snapshot ? ` · ${digestShort(cr.rollback_target_snapshot.content_digest)}` : ""}
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* verification_failed with pending proposal link (Task 9.3) */}
+                {cr.status === "verification_failed" && !cr.is_rollback && cr.pending_rollback_proposal_id ? (
+                  <div className="mt-3 rounded border border-warning/30 bg-warning/10 p-3 text-xs">
+                    <p className="text-warning font-semibold flex items-center gap-1">
+                      <AlertTriangle className="h-3.5 w-3.5" /> Verification failed — rollback proposed
+                    </p>
+                    <p className="mt-1 text-muted">
+                      Auto-rollback proposal{" "}
+                      <a
+                        href={`#change-${cr.pending_rollback_proposal_id}`}
+                        className="font-mono underline"
+                      >
+                        #{cr.pending_rollback_proposal_id}
+                      </a>{" "}
+                      is {cr.pending_rollback_proposal?.status ?? "pending_approval"}.
+                    </p>
+                  </div>
+                ) : cr.status === "verification_failed" && !cr.is_rollback && !cr.pending_rollback_proposal_id ? (
+                  <div className="mt-3 rounded border border-warning/30 bg-warning/10 p-3 text-xs">
+                    <p className="text-warning font-semibold flex items-center gap-1">
+                      <AlertTriangle className="h-3.5 w-3.5" /> Verification failed
+                    </p>
+                    {canApprove && cr.baseline_snapshot_id ? (
+                      <Button
+                        onClick={() => void handleManualRollback(cr)}
+                        className="mt-2 h-8 px-2 text-xs bg-paper text-ink"
+                      >
+                        <ListRestart className="h-3.5 w-3.5" /> Propose Rollback
+                      </Button>
+                    ) : (
+                      <p className="mt-1 text-muted">
+                        No rollback proposal available (baseline snapshot may not be restorable).
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+
+                {/* Rollback verification_failed context (Task 9.5) */}
+                {cr.status === "verification_failed" && cr.is_rollback && (
+                  <div className="mt-3 rounded border border-error/30 bg-error/10 p-3 text-xs">
+                    <p className="text-error font-semibold flex items-center gap-1">
+                      <XCircle className="h-3.5 w-3.5" /> Rollback verification failed
+                    </p>
+                    <p className="mt-1 text-muted">No further automatic rollback will be proposed. Manual intervention required.</p>
+                  </div>
+                )}
               </div>
               {cr.status === "pending_approval" && canApprove && (
                 <div className="flex gap-2">
@@ -792,6 +897,148 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
           <Button type="button" onClick={() => setOpen(false)} className="bg-paper">Cancel</Button>
         </div>
       </form>
+    </div>
+  );
+}
+
+// ── Rollback Submit Form ──────────────────────────────────────────────────
+
+function RollbackSubmitForm({
+  snapshot,
+  deviceId,
+  onClose,
+  onSuccess
+}: {
+  snapshot: ConfigSnapshot;
+  deviceId: number;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [summary, setSummary] = useState(`Rollback to snapshot #${snapshot.id} (${digestShort(snapshot.content_digest)})`);
+  const [preflight, setPreflight] = useState<ChangePreflightResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function runPreflight() {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.previewRollbackPreflight({
+        device_id: deviceId,
+        datastore: snapshot.datastore,
+        reason,
+        rollback_target_snapshot_id: snapshot.id
+      });
+      setPreflight(result);
+      if (!result.passed) {
+        const msgs = result.blockers.map((b) => formatRollbackBlocker(b));
+        throw new Error(msgs.join("; "));
+      }
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reason.trim()) { setError("Reason is required"); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      if (!preflight?.passed) {
+        await runPreflight();
+        setLoading(false);
+        return;
+      }
+      await api.submitRollback({
+        device_id: deviceId,
+        datastore: snapshot.datastore,
+        change_summary: summary,
+        reason,
+        rollback_target_snapshot_id: snapshot.id
+      });
+      onSuccess();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded border border-warm bg-paper p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h4 className="text-sm font-semibold flex items-center gap-1.5">
+          <ListRestart className="h-4 w-4" />
+          Restore to Snapshot #{snapshot.id}
+        </h4>
+        <button onClick={onClose} className="text-muted hover:text-ink text-xs">✕ Cancel</button>
+      </div>
+      <div className="mb-3 grid grid-cols-2 gap-2 text-xs text-muted">
+        <Metric label="Snapshot" value={`#${snapshot.id}`} />
+        <Metric label="Datastore" value={snapshot.datastore} />
+        <Metric label="Digest" value={digestShort(snapshot.content_digest)} />
+        <Metric label="Collected" value={formatDate(snapshot.collected_at)} />
+      </div>
+      {!snapshot.rollback_eligible ? (
+        <div className="rounded border border-error/20 bg-error/10 p-3 text-xs text-error">
+          This snapshot cannot be restored: {snapshot.rollback_blocker ?? "normalized content unavailable"}
+        </div>
+      ) : (
+        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
+          <div>
+            <FieldLabel>Change summary</FieldLabel>
+            <input
+              type="text"
+              required
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <FieldLabel>Reason (required)</FieldLabel>
+            <textarea
+              required
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+              placeholder="Why are you restoring this snapshot?"
+              className="mt-1 w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
+            />
+          </div>
+          {preflight ? (
+            <div className="rounded border border-warm bg-canvas p-3 text-xs space-y-1">
+              <div className="flex items-center gap-2">
+                {preflight.passed ? (
+                  <CheckCircle className="h-4 w-4 text-online" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4 text-error" />
+                )}
+                <span className="font-medium">{preflight.passed ? "Preflight passed" : "Preflight blocked"}</span>
+              </div>
+              {preflight.blockers.length > 0 ? (
+                <ul className="ml-6 space-y-0.5 text-error">
+                  {preflight.blockers.map((b) => <li key={b}>{formatRollbackBlocker(b)}</li>)}
+                </ul>
+              ) : null}
+              {preflight.payload ? (
+                <Metric label="Payload digest" value={digestShort(preflight.payload.digest)} />
+              ) : null}
+              {preflight.risk_summary ? (
+                <Metric label="Risk" value={String((preflight.risk_summary as ChangeRiskSummary).risk_level ?? "-")} />
+              ) : null}
+            </div>
+          ) : null}
+          {error ? <p className="text-xs text-error">{error}</p> : null}
+          <Button type="submit" busy={loading}>
+            {preflight?.passed ? <><CheckCircle className="h-4 w-4" /> Submit Rollback</> : <><Sparkles className="h-4 w-4" /> Preview Preflight</>}
+          </Button>
+        </form>
+      )}
     </div>
   );
 }
@@ -1383,13 +1630,21 @@ function PreflightSummary({
         <StatusBadge status={preflight.passed ? "passed" : "failed"} />
       </div>
       <div className={cn("mt-2 grid gap-2 text-xs", compact ? "" : "sm:grid-cols-2")}>
-        <Metric label="Baseline" value={preflight.baseline_snapshot?.id ?? "-"} />
+        <Metric
+          label={preflight.mode === "rollback" ? "Current" : "Baseline"}
+          value={preflight.baseline_snapshot?.id ?? "-"}
+        />
+        {preflight.mode === "rollback" ? (
+          <Metric label="Target" value={preflight.rollback_target_snapshot?.id ?? "-"} />
+        ) : null}
         <Metric label="Payload" value={preflight.payload ? `${preflight.payload.length} bytes` : "-"} />
         <Metric label="Risk" value={preflight.risk_summary?.risk_level ?? "-"} />
         <Metric label="Digest" value={digestShort(preflight.payload?.digest)} />
       </div>
       {preflight.blockers.length > 0 ? (
-        <p className="mt-2 text-xs text-error">{preflight.blockers.join(", ")}</p>
+        <p className="mt-2 text-xs text-error">
+          {preflight.blockers.map((b) => formatRollbackBlocker(b)).join(", ")}
+        </p>
       ) : null}
     </div>
   );
@@ -1409,7 +1664,9 @@ function changePreflightFromRequest(cr: ChangeRequestRead): ChangePreflightRespo
       ? (cr.preflight_summary.blockers as string[])
       : [],
     recommended_action: null,
-    risk_summary: (cr.risk_summary as ChangePreflightResponse["risk_summary"]) ?? null
+    risk_summary: (cr.risk_summary as ChangePreflightResponse["risk_summary"]) ?? null,
+    mode: cr.is_rollback ? "rollback" : "forward",
+    rollback_target_snapshot: cr.rollback_target_snapshot ?? null
   };
 }
 
@@ -1473,51 +1730,93 @@ function ProfileGrid({ profile, loading }: { profile: DeviceProfile | null; load
 function SnapshotTable({
   snapshots,
   canSubmitChange = false,
-  onStartChange
+  canApprove = false,
+  deviceId,
+  onStartChange,
+  onRollbackSuccess
 }: {
   snapshots: ConfigSnapshot[];
   canSubmitChange?: boolean;
+  canApprove?: boolean;
+  deviceId?: number;
   onStartChange?: (snapshot: ConfigSnapshot) => void;
+  onRollbackSuccess?: () => void;
 }) {
+  const [rollbackTarget, setRollbackTarget] = useState<ConfigSnapshot | null>(null);
+
   return (
     <InfoPanel icon={<FileClock />} title="Snapshots">
       {snapshots.length === 0 ? (
         <EmptyState icon={<Database className="h-6 w-6" />} title="No snapshots collected" />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-warm text-left font-mono text-[11px] uppercase text-muted">
-                <th className="py-2 pr-3 font-medium">Datastore</th>
-                <th className="py-2 pr-3 font-medium">Collected</th>
-                <th className="py-2 pr-3 font-medium">Digest</th>
-                <th className="py-2 font-medium">Diff</th>
-              </tr>
-            </thead>
-            <tbody>
-              {snapshots.map((s) => (
-                <tr key={s.id} className="border-b border-warm/70 last:border-0">
-                  <td className="py-3 pr-3 font-mono text-xs">{s.datastore}</td>
-                  <td className="py-3 pr-3 text-muted">{formatDate(s.collected_at)}</td>
-                  <td className="py-3 pr-3 font-mono text-xs">{digestShort(s.content_digest)}</td>
-                  <td className="py-3 text-muted">
-                    <div className="flex items-center justify-between gap-2">
-                      <span>{diffLabel(s.diff_summary)}</span>
-                      {canSubmitChange && onStartChange ? (
-                        <Button
-                          onClick={() => onStartChange(s)}
-                          className="h-8 px-2 text-xs"
-                        >
-                          <Send className="h-3.5 w-3.5" /> Change
-                        </Button>
-                      ) : null}
-                    </div>
-                  </td>
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-warm text-left font-mono text-[11px] uppercase text-muted">
+                  <th className="py-2 pr-3 font-medium">Datastore</th>
+                  <th className="py-2 pr-3 font-medium">Collected</th>
+                  <th className="py-2 pr-3 font-medium">Digest</th>
+                  <th className="py-2 font-medium">Diff</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {snapshots.map((s) => (
+                  <tr key={s.id} className="border-b border-warm/70 last:border-0">
+                    <td className="py-3 pr-3 font-mono text-xs">{s.datastore}</td>
+                    <td className="py-3 pr-3 text-muted">{formatDate(s.collected_at)}</td>
+                    <td className="py-3 pr-3 font-mono text-xs">{digestShort(s.content_digest)}</td>
+                    <td className="py-3 text-muted">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>{diffLabel(s.diff_summary)}</span>
+                        <div className="flex gap-1.5">
+                          {canSubmitChange && onStartChange ? (
+                            <Button
+                              onClick={() => onStartChange(s)}
+                              className="h-8 px-2 text-xs"
+                            >
+                              <Send className="h-3.5 w-3.5" /> Change
+                            </Button>
+                          ) : null}
+                          {canApprove ? (
+                            s.rollback_eligible ? (
+                              <Button
+                                onClick={() => setRollbackTarget(s)}
+                                className="h-8 px-2 text-xs bg-paper border border-warm text-ink"
+                                title="Restore to this snapshot"
+                              >
+                                <ListRestart className="h-3.5 w-3.5" /> Restore
+                              </Button>
+                            ) : (
+                              <button
+                                disabled
+                                title={`Not restorable: ${s.rollback_blocker ?? "unknown"}`}
+                                className="h-8 px-2 text-xs opacity-40 cursor-not-allowed flex items-center gap-1 rounded border border-warm"
+                              >
+                                <ListRestart className="h-3.5 w-3.5" /> Restore
+                              </button>
+                            )
+                          ) : null}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {rollbackTarget && deviceId !== undefined ? (
+            <RollbackSubmitForm
+              snapshot={rollbackTarget}
+              deviceId={deviceId}
+              onClose={() => setRollbackTarget(null)}
+              onSuccess={() => {
+                setRollbackTarget(null);
+                onRollbackSuccess?.();
+              }}
+            />
+          ) : null}
+        </>
       )}
     </InfoPanel>
   );

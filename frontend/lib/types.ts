@@ -117,6 +117,8 @@ export type ChangePreflightResponse = {
   blockers: string[];
   recommended_action: string | null;
   risk_summary: ChangeRiskSummary | null;
+  mode: "forward" | "rollback";
+  rollback_target_snapshot: SnapshotReference | null;
 };
 
 export type ChangeVerificationSummary = {
@@ -127,6 +129,15 @@ export type ChangeVerificationSummary = {
   comparison: Record<string, unknown>;
   error_code: string | null;
   error_message: string | null;
+};
+
+export type ChangeRequestReference = {
+  id: number;
+  device_id: number;
+  datastore: string;
+  change_summary: string;
+  status: ChangeRequestStatus;
+  is_rollback: boolean;
 };
 
 export type ChangeRequestRead = {
@@ -158,6 +169,13 @@ export type ChangeRequestRead = {
   verified_at: string | null;
   created_at: string;
   updated_at: string;
+  is_rollback: boolean;
+  rollback_of_change_id: number | null;
+  rollback_of_change: ChangeRequestReference | null;
+  rollback_target_snapshot_id: number | null;
+  rollback_target_snapshot: SnapshotReference | null;
+  pending_rollback_proposal_id: number | null;
+  pending_rollback_proposal: ChangeRequestReference | null;
 };
 
 export type ChangeRequestListResponse = {
@@ -218,7 +236,16 @@ export type ConfigSnapshot = {
   collected_at: string;
   diff_summary: Record<string, unknown>;
   summary: Record<string, unknown>;
+  rollback_eligible: boolean;
+  rollback_blocker: string | null;
 };
+
+export type RollbackBlockerCode =
+  | "CHANGE_IN_FLIGHT"
+  | "ROLLBACK_TARGET_NOT_RESTORABLE"
+  | "ROLLBACK_NO_DIVERGENCE"
+  | "ROLLBACK_ORIGIN_NOT_RECOVERABLE"
+  | string;
 
 export type TaskSummary = {
   task_id: string;

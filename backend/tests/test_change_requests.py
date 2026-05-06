@@ -338,6 +338,236 @@ def test_preflight_redacts_sensitive_payload_content(
     assert "password" not in str(resp.json()).lower()
 
 
+def test_operator_cannot_preview_rollback_preflight(client: TestClient, operator_user):
+    token = get_token(client, "operator1")
+
+    resp = client.post(
+        "/api/v1/change-requests/preflight",
+        json={
+            "device_id": 1,
+            "datastore": "running",
+            "reason": "restore",
+            "mode": "rollback",
+            "rollback_target_snapshot_id": 1,
+        },
+        headers=auth_headers(token),
+    )
+
+    assert resp.status_code == 403
+
+
+def test_rollback_preflight_reports_success_and_blockers(
+    client: TestClient, db_session: Session, approver_user
+):
+    now = datetime.now(UTC)
+    device = _create_ready_device(db_session, collected_at=now - timedelta(minutes=30))
+    target = _create_restorable_snapshot(
+        db_session,
+        device_id=device.id,
+        source_task_id="rollback-target",
+        content_digest="sha256:rollback-target",
+        normalized_content="<config><target/></config>",
+        collected_at=now - timedelta(minutes=20),
+    )
+    current = _create_restorable_snapshot(
+        db_session,
+        device_id=device.id,
+        source_task_id="rollback-current",
+        content_digest="sha256:rollback-current",
+        normalized_content="<config><current/></config>",
+        collected_at=now - timedelta(minutes=10),
+    )
+    missing_content = _create_snapshot_without_normalized_content(
+        db_session,
+        device_id=device.id,
+        source_task_id="rollback-missing-content",
+        content_digest="sha256:missing-content",
+        collected_at=now - timedelta(minutes=15),
+    )
+    db_session.add(
+        DeviceConfigChangeRequest(
+            device_id=device.id,
+            datastore="running",
+            change_summary="origin not recoverable",
+            reason="test",
+            status="pending_approval",
+            submitter_id=approver_user.id,
+        )
+    )
+    db_session.commit()
+    origin = db_session.query(DeviceConfigChangeRequest).one()
+
+    token = get_token(client, "approver1")
+    payload = {
+        "device_id": device.id,
+        "datastore": "running",
+        "reason": "restore",
+        "mode": "rollback",
+        "rollback_target_snapshot_id": target.id,
+    }
+
+    success = client.post(
+        "/api/v1/change-requests/preflight",
+        json=payload,
+        headers=auth_headers(token),
+    )
+    no_divergence = client.post(
+        "/api/v1/change-requests/preflight",
+        json=payload | {"rollback_target_snapshot_id": current.id},
+        headers=auth_headers(token),
+    )
+    not_restorable = client.post(
+        "/api/v1/change-requests/preflight",
+        json=payload | {"rollback_target_snapshot_id": missing_content.id},
+        headers=auth_headers(token),
+    )
+    bad_origin = client.post(
+        "/api/v1/change-requests/preflight",
+        json=payload | {"rollback_of_change_id": origin.id},
+        headers=auth_headers(token),
+    )
+
+    assert success.status_code == 200
+    assert success.json()["passed"] is True
+    assert success.json()["mode"] == "rollback"
+    assert success.json()["rollback_target_snapshot"]["id"] == target.id
+    assert success.json()["baseline_snapshot"]["id"] == current.id
+    assert success.json()["payload"]["digest"].startswith("sha256:")
+    assert no_divergence.status_code == 200
+    assert "ROLLBACK_NO_DIVERGENCE" in no_divergence.json()["blockers"]
+    assert not_restorable.status_code == 200
+    assert "ROLLBACK_TARGET_NOT_RESTORABLE" in not_restorable.json()["blockers"]
+    assert bad_origin.status_code == 200
+    assert "ROLLBACK_ORIGIN_NOT_RECOVERABLE" in bad_origin.json()["blockers"]
+
+    inflight = DeviceConfigChangeRequest(
+        device_id=device.id,
+        datastore="running",
+        change_summary="in flight",
+        reason="test",
+        status="queued",
+        submitter_id=approver_user.id,
+    )
+    db_session.add(inflight)
+    db_session.commit()
+    blocked = client.post(
+        "/api/v1/change-requests/preflight",
+        json=payload,
+        headers=auth_headers(token),
+    )
+    assert "CHANGE_IN_FLIGHT" in blocked.json()["blockers"]
+
+
+def test_submit_rollback_persists_server_derived_payload(
+    client: TestClient, db_session: Session, approver_user
+):
+    now = datetime.now(UTC)
+    device = _create_ready_device(db_session, collected_at=now - timedelta(minutes=30))
+    target = _create_restorable_snapshot(
+        db_session,
+        device_id=device.id,
+        source_task_id="submit-rollback-target",
+        content_digest="sha256:submit-rollback-target",
+        normalized_content="<config><target>secret</target></config>",
+        collected_at=now - timedelta(minutes=20),
+    )
+    _create_restorable_snapshot(
+        db_session,
+        device_id=device.id,
+        source_task_id="submit-rollback-current",
+        content_digest="sha256:submit-rollback-current",
+        normalized_content="<config><current/></config>",
+        collected_at=now - timedelta(minutes=10),
+    )
+
+    token = get_token(client, "approver1")
+    resp = client.post(
+        "/api/v1/change-requests/rollback",
+        json={
+            "device_id": device.id,
+            "datastore": "running",
+            "change_summary": "restore target",
+            "reason": "restore service",
+            "rollback_target_snapshot_id": target.id,
+        },
+        headers=auth_headers(token),
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["is_rollback"] is True
+    assert body["preflight_summary"]["mode"] == "rollback"
+    assert "secret" not in str(body)
+    payload = (
+        db_session.query(DeviceConfigChangePayload)
+        .filter_by(change_request_id=body["id"])
+        .one()
+    )
+    assert payload.summary_source == f"rollback_from_snapshot:{target.id}"
+    assert payload.body_digest == body["preflight_summary"]["payload"]["digest"]
+    assert payload.config_body == "<config><target>secret</target></config>"
+
+
+def test_rollback_approval_reruns_preflight_and_blocks_inflight(
+    client: TestClient, db_session: Session, approver_user, monkeypatch
+):
+    dispatched: list[str] = []
+    monkeypatch.setattr("app.tasks.service.run_config_change.delay", dispatched.append)
+    now = datetime.now(UTC)
+    device = _create_ready_device(db_session, collected_at=now - timedelta(minutes=30))
+    target = _create_restorable_snapshot(
+        db_session,
+        device_id=device.id,
+        source_task_id="approve-rollback-target",
+        content_digest="sha256:approve-rollback-target",
+        normalized_content="<config><target/></config>",
+        collected_at=now - timedelta(minutes=20),
+    )
+    _create_restorable_snapshot(
+        db_session,
+        device_id=device.id,
+        source_task_id="approve-rollback-current",
+        content_digest="sha256:approve-rollback-current",
+        normalized_content="<config><current/></config>",
+        collected_at=now - timedelta(minutes=10),
+    )
+    token = get_token(client, "approver1")
+    submit_resp = client.post(
+        "/api/v1/change-requests/rollback",
+        json={
+            "device_id": device.id,
+            "datastore": "running",
+            "change_summary": "restore target",
+            "reason": "restore service",
+            "rollback_target_snapshot_id": target.id,
+        },
+        headers=auth_headers(token),
+    )
+    assert submit_resp.status_code == 201
+    rollback_id = submit_resp.json()["id"]
+    db_session.add(
+        DeviceConfigChangeRequest(
+            device_id=device.id,
+            datastore="running",
+            change_summary="parallel change",
+            reason="test",
+            status="queued",
+            submitter_id=approver_user.id,
+        )
+    )
+    db_session.commit()
+
+    approve_resp = client.post(
+        f"/api/v1/change-requests/{rollback_id}/approve",
+        json={"approval_note": "go"},
+        headers=auth_headers(token),
+    )
+
+    assert approve_resp.status_code == 400
+    assert "CHANGE_IN_FLIGHT" in approve_resp.json()["detail"]
+    assert dispatched == []
+
+
 def test_config_change_task_updates_change_request_status(db_session: Session, monkeypatch):
     from app.netconf.services import NetconfOperationResult
     from app.tasks.jobs import run_config_change
@@ -476,6 +706,148 @@ def test_config_change_task_marks_verification_failure_after_write_success(
     assert db_session.query(TaskStatus).filter_by(task_id=task.task_id).count() == 1
 
 
+def test_verification_failure_auto_proposes_rollback_with_preflight(
+    db_session: Session, monkeypatch
+):
+    from app.auth.constants import AuditAction
+    from app.auth.repositories import AuditLogRepository
+    from app.devices.constants import DeviceAccessErrorCode
+    from app.netconf.services import NetconfOperationResult
+    from app.tasks.jobs import run_config_change
+    from tests.test_tasks_and_ai import _session_factory
+
+    now = datetime.now(UTC)
+    device = _create_ready_device(db_session, collected_at=now - timedelta(minutes=30))
+    baseline = _create_restorable_snapshot(
+        db_session,
+        device_id=device.id,
+        source_task_id="auto-proposal-baseline",
+        content_digest="sha256:auto-proposal-baseline",
+        normalized_content="<config><baseline/></config>",
+        collected_at=now - timedelta(minutes=10),
+    )
+    cr, task = _create_change_task(
+        db_session,
+        device_id=device.id,
+        baseline_snapshot_id=baseline.id,
+        task_id="change-task-auto-rollback",
+    )
+    monkeypatch.setattr("app.tasks.jobs.SessionLocal", _session_factory(db_session))
+
+    class FakeService:
+        def write_config(self, params, datastore, config_body):
+            return NetconfOperationResult(ok=True, summary={"write": "success"})
+
+        def read_config(self, params, datastore):
+            return NetconfOperationResult(
+                ok=False,
+                error_code=DeviceAccessErrorCode.CONNECTION_TIMEOUT,
+                error_message="NETCONF operation timed out",
+                context={"datastore": datastore},
+            )
+
+    monkeypatch.setattr("app.tasks.jobs.create_netconf_service", lambda: FakeService())
+
+    result = run_config_change.run(task.task_id)
+    db_session.expire_all()
+    rollback = (
+        db_session.query(DeviceConfigChangeRequest)
+        .filter_by(rollback_of_change_id=cr.id, is_rollback=True)
+        .one()
+    )
+    payload = (
+        db_session.query(DeviceConfigChangePayload)
+        .filter_by(change_request_id=rollback.id)
+        .one()
+    )
+
+    assert result["status"] == "failed"
+    assert rollback.status == "pending_approval"
+    assert rollback.rollback_target_snapshot_id == baseline.id
+    assert rollback.execution_task_id is None
+    assert rollback.preflight_summary["mode"] == "rollback"
+    assert "blockers" in rollback.preflight_summary
+    assert payload.summary_source == f"rollback_from_snapshot:{baseline.id}"
+    logs = AuditLogRepository(db_session).list_paginated(
+        action=AuditAction.CHANGE_ROLLBACK_PROPOSED
+    )
+    assert logs
+    assert logs[0].metadata_json["preflight_status"] == rollback.preflight_status
+
+
+def test_rollback_task_rejects_payload_digest_mismatch_before_write(
+    db_session: Session, monkeypatch
+):
+    from app.netconf.services import NetconfOperationResult
+    from app.tasks.jobs import run_config_change
+    from tests.test_tasks_and_ai import _session_factory
+
+    now = datetime.now(UTC)
+    device = _create_ready_device(db_session, collected_at=now - timedelta(minutes=30))
+    target = _create_restorable_snapshot(
+        db_session,
+        device_id=device.id,
+        source_task_id="rollback-digest-target",
+        content_digest="sha256:rollback-digest-target",
+        normalized_content="<config><target/></config>",
+        collected_at=now - timedelta(minutes=10),
+    )
+    cr = DeviceConfigChangeRequest(
+        device_id=device.id,
+        datastore="running",
+        change_summary="rollback",
+        reason="restore",
+        status="queued",
+        submitter_id=1,
+        approver_id=1,
+        executor_id=1,
+        is_rollback=True,
+        rollback_target_snapshot_id=target.id,
+        preflight_status="passed",
+    )
+    db_session.add(cr)
+    db_session.flush()
+    db_session.add(
+        DeviceConfigChangePayload(
+            change_request_id=cr.id,
+            config_body="<config><tampered/></config>",
+        )
+    )
+    task = TaskStatus(
+        task_id="rollback-digest-mismatch-task",
+        task_type="device.config_change",
+        status="queued",
+        device_id=device.id,
+        actor_user_id=1,
+        change_request_id=cr.id,
+        metadata_json={"device_id": device.id, "datastore": "running"},
+        context_json={"device_id": device.id, "datastore": "running"},
+    )
+    db_session.add(task)
+    db_session.commit()
+    monkeypatch.setattr("app.tasks.jobs.SessionLocal", _session_factory(db_session))
+
+    class FakeService:
+        def write_config(self, params, datastore, config_body):
+            raise AssertionError("write_config must not be called after digest mismatch")
+
+        def read_config(self, params, datastore):
+            return NetconfOperationResult(ok=True)
+
+    monkeypatch.setattr("app.tasks.jobs.create_netconf_service", lambda: FakeService())
+
+    result = run_config_change.run(task.task_id)
+    db_session.expire_all()
+    stored = db_session.get(DeviceConfigChangeRequest, cr.id)
+    stored_task = db_session.query(TaskStatus).filter_by(task_id=task.task_id).one()
+
+    assert result["status"] == "failed"
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored_task.error_code == "INVALID_PARAMETER"
+    assert stored_task.error_message == "Rollback payload digest mismatch"
+
+
 def test_config_change_task_write_failure_skips_verification(
     db_session: Session, monkeypatch
 ):
@@ -559,6 +931,69 @@ def _create_change_task(
     db_session.add(task)
     db_session.commit()
     return cr, task
+
+
+def _create_restorable_snapshot(
+    db_session: Session,
+    *,
+    device_id: int,
+    source_task_id: str,
+    content_digest: str,
+    normalized_content: str,
+    collected_at: datetime,
+):
+    db_session.add(
+        TaskStatus(
+            task_id=source_task_id,
+            task_type="device.config_snapshot",
+            status="succeeded",
+            device_id=device_id,
+            completed_at=collected_at,
+        )
+    )
+    snapshot = DeviceRepository(db_session).create_config_snapshot(
+        device_id=device_id,
+        source_task_id=source_task_id,
+        datastore="running",
+        content_digest=content_digest,
+        collected_at=collected_at,
+        diff_summary={"changed": True},
+        summary={"content_digest": content_digest},
+        normalized_content=normalized_content,
+    )
+    db_session.commit()
+    return snapshot
+
+
+def _create_snapshot_without_normalized_content(
+    db_session: Session,
+    *,
+    device_id: int,
+    source_task_id: str,
+    content_digest: str,
+    collected_at: datetime,
+):
+    db_session.add(
+        TaskStatus(
+            task_id=source_task_id,
+            task_type="device.config_snapshot",
+            status="succeeded",
+            device_id=device_id,
+            completed_at=collected_at,
+        )
+    )
+    snapshot = DeviceRepository(db_session).create_config_snapshot(
+        device_id=device_id,
+        source_task_id=source_task_id,
+        datastore="running",
+        content_digest=content_digest,
+        collected_at=collected_at,
+        diff_summary={"changed": True},
+        summary={"content_digest": content_digest},
+        normalized_content=None,
+    )
+    db_session.commit()
+    return snapshot
 
 
 def _create_ready_device(

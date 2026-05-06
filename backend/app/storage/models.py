@@ -137,8 +137,13 @@ class DeviceConfigSnapshot(TimestampMixin, Base):
     )
     diff_summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    normalized_content: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     device: Mapped[Device] = relationship(back_populates="config_snapshots")
+
+    @property
+    def rollback_eligible(self) -> bool:
+        return bool(self.normalized_content)
 
 
 # ── Auth / RBAC many-to-many association tables ────────────────────────────
@@ -237,6 +242,13 @@ class DeviceConfigChangeRequest(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), nullable=False, index=True)
     datastore: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_rollback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    rollback_of_change_id: Mapped[int | None] = mapped_column(
+        ForeignKey("device_config_change_requests.id"), nullable=True, index=True
+    )
+    rollback_target_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("device_config_snapshots.id"), nullable=True, index=True
+    )
     change_summary: Mapped[str] = mapped_column(Text, nullable=False)
     change_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
@@ -279,6 +291,9 @@ class DeviceConfigChangeRequest(TimestampMixin, Base):
     verification_snapshot: Mapped[DeviceConfigSnapshot | None] = relationship(
         foreign_keys=[verification_snapshot_id]
     )
+    rollback_target_snapshot: Mapped[DeviceConfigSnapshot | None] = relationship(
+        foreign_keys=[rollback_target_snapshot_id]
+    )
     submitter: Mapped[User] = relationship(foreign_keys=[submitter_id])
     approver: Mapped[User | None] = relationship(foreign_keys=[approver_id])
     executor: Mapped[User | None] = relationship(foreign_keys=[executor_id])
@@ -298,6 +313,10 @@ class DeviceConfigChangePayload(TimestampMixin, Base):
         ForeignKey("device_config_change_requests.id"), nullable=False, unique=True, index=True
     )
     config_body: Mapped[str] = mapped_column(Text, nullable=False)
+    body_digest: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    body_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    line_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    summary_source: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     change_request: Mapped[DeviceConfigChangeRequest] = relationship(back_populates="payload")
 

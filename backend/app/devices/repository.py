@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.devices.constants import DeviceTaskStatus
 from app.storage.models import (
     Device,
+    DeviceConfigChangeRequest,
     DeviceConfigSnapshot,
     DeviceConnectionConfig,
     DeviceDiscoveryResult,
@@ -99,6 +100,7 @@ class DeviceRepository(Repository[Device]):
         collected_at: datetime,
         diff_summary: dict[str, object],
         summary: dict[str, object],
+        normalized_content: str | None = None,
     ) -> DeviceConfigSnapshot:
         snapshot = DeviceConfigSnapshot(
             device_id=device_id,
@@ -108,6 +110,7 @@ class DeviceRepository(Repository[Device]):
             collected_at=collected_at,
             diff_summary=diff_summary,
             summary=summary,
+            normalized_content=normalized_content,
         )
         self.session.add(snapshot)
         self.session.flush()
@@ -185,6 +188,13 @@ class DeviceRepository(Repository[Device]):
             ).all()
         )
 
+    def get_task_by_task_id(self, task_id: str) -> TaskStatus | None:
+        return self.session.scalar(select(TaskStatus).where(TaskStatus.task_id == task_id))
+
+    def is_successful_snapshot_source(self, snapshot: DeviceConfigSnapshot) -> bool:
+        task = self.get_task_by_task_id(snapshot.source_task_id)
+        return bool(task and task.status == DeviceTaskStatus.SUCCEEDED)
+
     def find_active_device_task(
         self,
         *,
@@ -230,3 +240,32 @@ class DeviceRepository(Repository[Device]):
         task.completed_at = completed_at
         self.session.flush()
         return task
+
+    def find_inflight_change_requests(
+        self, *, device_id: int, datastore: str
+    ) -> list[DeviceConfigChangeRequest]:
+        inflight_statuses = ("queued", "running", "verifying")
+        return list(
+            self.session.scalars(
+                select(DeviceConfigChangeRequest).where(
+                    DeviceConfigChangeRequest.device_id == device_id,
+                    DeviceConfigChangeRequest.datastore == datastore,
+                    DeviceConfigChangeRequest.status.in_(inflight_statuses),
+                )
+            )
+        )
+
+    def find_rollback_proposals_for_change(
+        self, change_id: int
+    ) -> list[DeviceConfigChangeRequest]:
+        return list(
+            self.session.scalars(
+                select(DeviceConfigChangeRequest).where(
+                    DeviceConfigChangeRequest.rollback_of_change_id == change_id,
+                    DeviceConfigChangeRequest.is_rollback.is_(True),
+                )
+            )
+        )
+
+    def get_snapshot_by_id(self, snapshot_id: int) -> DeviceConfigSnapshot | None:
+        return self.session.get(DeviceConfigSnapshot, snapshot_id)

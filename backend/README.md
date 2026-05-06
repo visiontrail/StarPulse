@@ -95,11 +95,37 @@ Preflight responses and stored change records include safe summaries only: basel
 
 After a controlled NETCONF write succeeds, the worker marks the change as `verifying`, performs a read-only `get-config` for the same datastore, saves a post-change snapshot, compares safe digests with the baseline, and records `executed` or `verification_failed`. Write failures are marked `failed` and do not run post-change verification.
 
+### Controlled Rollback Loop
+
+When a non-rollback configuration change ends in `verification_failed`, the worker automatically creates a `pending_approval` rollback proposal (`is_rollback=true`, `rollback_of_change_id=<origin>`, `rollback_target_snapshot_id=<origin.baseline_snapshot_id>`). The proposal is never executed automatically — an approver or admin must approve or direct-execute it.
+
+Rollback lifecycle:
+1. **Auto-proposal** (worker): on verification failure, if the baseline snapshot has `normalized_content`, the worker creates the proposal and writes a `change.rollback_proposed` audit event.
+2. **Manual submission** (approver+): `POST /api/v1/change-requests/rollback` — requires `device:change:approve`.  Server derives the NETCONF payload from the target snapshot at submit time and stores only the digest.
+3. **Approval/direct-execution**: same as forward changes, but re-validates rollback preflight (target snapshot still restorable, no inflight changes, origin still in failed state).
+4. **Execution and verification**: reuses the same apply-verify worker path. Verification passes only if the post-change snapshot digest matches the target snapshot digest. Rollback `verification_failed` does not trigger a second proposal.
+
+Rollback preflight blockers: `CHANGE_IN_FLIGHT`, `ROLLBACK_TARGET_NOT_RESTORABLE`, `ROLLBACK_NO_DIVERGENCE`, `ROLLBACK_ORIGIN_NOT_RECOVERABLE`.
+
+Rollback requires snapshots with `normalized_content` populated (migration `0007_rollback_loop`). Snapshots created before that migration are not restorable (`rollback_eligible = false`).
+
 ### Migration and Rollback
 
-Migration: run `star-pulse-migrate` or apply the latest Alembic revision. Revisions through `0006_change_request_safety_loop` add users, roles, permissions, refresh tokens, audit logs, change request payloads, and preflight/verification fields.
+Migration: run `star-pulse-migrate` or apply the latest Alembic revision. Revisions through `0007_rollback_loop` add rollback fields to `device_config_change_requests` and `normalized_content` to `device_config_snapshots`.
 
-Rollback: run `alembic downgrade 0003_device_config_snapshots`. In production, do not disable audit logging or bypass RBAC via config. Rollback must be coordinated with a backend service restart.
+Rollback: run `alembic downgrade 0006_change_request_safety_loop`. In production, do not disable audit logging or bypass RBAC via config. Rollback must be coordinated with a backend service restart.
+
+### Local Operations Workflow (Rollback)
+
+To exercise the rollback loop locally:
+
+1. Collect a baseline snapshot: `POST /api/v1/devices/{id}/config-snapshots`
+2. Submit and approve a change that will fail post-change verification (e.g., mock the verifying read to return a mismatched digest)
+3. After the change reaches `verification_failed`, the worker auto-creates a rollback proposal
+4. Query the failed change: `GET /api/v1/change-requests/{id}` — the response includes `pending_rollback_proposal_id`
+5. Approve the proposal: `POST /api/v1/change-requests/{proposal_id}/approve`
+6. The rollback is enqueued; post-change snapshot digest is compared against the target snapshot digest
+7. Audit trail: `change.rollback_proposed` → `change.rollback_executed` → `change.rollback_verified`
 
 ## Device Access Workflow
 

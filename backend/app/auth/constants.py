@@ -103,6 +103,13 @@ class AuditAction:
     CHANGE_VERIFICATION_SUCCESS = "change.verification.success"
     CHANGE_VERIFICATION_FAILURE = "change.verification.failure"
 
+    CHANGE_ROLLBACK_PROPOSED = "change.rollback_proposed"
+    CHANGE_ROLLBACK_SUBMITTED = "change.rollback_submitted"
+    CHANGE_ROLLBACK_EXECUTED = "change.rollback_executed"
+    CHANGE_ROLLBACK_VERIFIED = "change.rollback_verified"
+    CHANGE_ROLLBACK_VERIFICATION_FAILED = "change.rollback_verification_failed"
+    CHANGE_ROLLBACK_PROPOSAL_SKIPPED = "change.rollback_proposal_skipped"
+
     DEVICE_ONBOARDING_CREATED = "device.onboarding.created"
     DEVICE_ONBOARDING_STEP_QUEUED = "device.onboarding.step.queued"
     DEVICE_ONBOARDING_STEP_SUCCESS = "device.onboarding.step.success"

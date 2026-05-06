@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 
 from sqlalchemy.orm import Session
 
@@ -10,11 +11,19 @@ from app.devices.repository import DeviceRepository
 from app.netconf.services import NetconfOperationResult
 from app.storage.models import DeviceConfigSnapshot
 
+ROLLBACK_NORMALIZED_CONTENT_MAX_BYTES = 4 * 1024 * 1024  # 4 MB
+
 
 @dataclass(frozen=True)
 class ConfigSnapshotCreateResult:
     snapshot: DeviceConfigSnapshot
     previous_snapshot: DeviceConfigSnapshot | None
+
+
+@dataclass(frozen=True)
+class RollbackEligibility:
+    eligible: bool
+    blocker: str | None = None
 
 
 class ConfigSnapshotService:
@@ -45,6 +54,9 @@ class ConfigSnapshotService:
             read_summary=result.summary,
             diff_summary=diff_summary,
         )
+        normalized = result.normalized_content
+        if normalized and len(normalized.encode("utf-8")) > ROLLBACK_NORMALIZED_CONTENT_MAX_BYTES:
+            normalized = None
         snapshot = self.repository.create_config_snapshot(
             device_id=device_id,
             source_task_id=source_task_id,
@@ -53,8 +65,56 @@ class ConfigSnapshotService:
             collected_at=collected,
             diff_summary=diff_summary,
             summary=summary,
+            normalized_content=normalized,
         )
         return ConfigSnapshotCreateResult(snapshot=snapshot, previous_snapshot=previous)
+
+    def assess_rollback_eligibility(self, snapshot: DeviceConfigSnapshot) -> RollbackEligibility:
+        if not snapshot.normalized_content:
+            return RollbackEligibility(eligible=False, blocker="ROLLBACK_TARGET_NOT_RESTORABLE")
+        if not self.repository.is_successful_snapshot_source(snapshot):
+            return RollbackEligibility(eligible=False, blocker="ROLLBACK_TARGET_NOT_RESTORABLE")
+        return RollbackEligibility(eligible=True)
+
+
+class RollbackPayloadDeriveError(RuntimeError):
+    def __init__(self, message: str, blocker: str) -> None:
+        super().__init__(message)
+        self.blocker = blocker
+
+
+@dataclass(frozen=True)
+class DerivedRollbackPayload:
+    config_body: str
+    digest: str
+    length: int
+    line_count: int
+    source_label: str
+
+
+class RollbackPayloadDeriver:
+    def build(
+        self, *, target_snapshot: DeviceConfigSnapshot, datastore: str
+    ) -> DerivedRollbackPayload:
+        if not target_snapshot.normalized_content:
+            raise RollbackPayloadDeriveError(
+                "Target snapshot does not have restorable normalized content",
+                blocker="ROLLBACK_TARGET_NOT_RESTORABLE",
+            )
+        content = target_snapshot.normalized_content
+        if len(content.encode("utf-8")) > ROLLBACK_NORMALIZED_CONTENT_MAX_BYTES:
+            raise RollbackPayloadDeriveError(
+                "Target snapshot normalized content exceeds size limit",
+                blocker="ROLLBACK_TARGET_NOT_RESTORABLE",
+            )
+        digest = "sha256:" + sha256(content.encode("utf-8")).hexdigest()
+        return DerivedRollbackPayload(
+            config_body=content,
+            digest=digest,
+            length=len(content),
+            line_count=len(content.splitlines()) if content else 0,
+            source_label=f"rollback_from_snapshot:{target_snapshot.id}",
+        )
 
 
 def build_diff_summary(

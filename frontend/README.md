@@ -37,6 +37,25 @@ STAR_PULSE_CORS_ALLOWED_ORIGINS='["http://localhost:3000"]'
 5. Submit and direct-execute forms first call backend preflight and show baseline, payload, risk, and blockers before sending the final request.
 6. Change cards show submitter, approver, preflight/risk context, execution task, verification state, and safe post-change summary fields.
 
+### Rollback Development Flow
+
+Snapshot-driven rollback entry points:
+- In the Devices tab, each snapshot row shows a **Restore** button for approvers and admins (`device:change:approve`).
+- Snapshots with `rollback_eligible = false` show the button disabled with a tooltip explaining why (e.g., `ROLLBACK_TARGET_NOT_RESTORABLE`).
+- Clicking **Restore** opens the `RollbackSubmitForm` inline, which previews the rollback preflight before allowing submission.
+
+Verification-failed proposal link:
+- Change cards in the Changes tab that have `status = "verification_failed"` show a warning banner.
+- If `pending_rollback_proposal_id` is set, the banner indicates the proposal ID for easy navigation.
+- If no proposal exists (e.g., baseline snapshot not restorable), the banner explains no rollback is available.
+
+Rollback change cards:
+- Rollback changes display an `is_rollback` badge alongside the status badge.
+- A "Rollback Context" card shows the origin change ID and target snapshot ID/digest.
+- Rollback `verification_failed` cards display a distinct message explaining no further auto-proposal will be created.
+
+Type additions: `ChangeRequestRead` now includes `is_rollback`, `rollback_of_change_id`, `rollback_target_snapshot_id`, `rollback_target_snapshot`, and `pending_rollback_proposal_id`. `ConfigSnapshot` now includes `rollback_eligible` and `rollback_blocker`. `ChangePreflightResponse` now includes `mode` and `rollback_target_snapshot`.
+
 ### CORS Configuration
 
 When the frontend and backend run on different origins (common in development), ensure:
