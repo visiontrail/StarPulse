@@ -269,3 +269,24 @@ class DeviceRepository(Repository[Device]):
 
     def get_snapshot_by_id(self, snapshot_id: int) -> DeviceConfigSnapshot | None:
         return self.session.get(DeviceConfigSnapshot, snapshot_id)
+
+    def abandon_stale_device_tasks(self, device_id: int) -> int:
+        from app.common.time import utc_now
+
+        active_statuses = (str(DeviceTaskStatus.QUEUED), str(DeviceTaskStatus.RUNNING))
+        tasks = list(
+            self.session.scalars(
+                select(TaskStatus).where(
+                    TaskStatus.device_id == device_id,
+                    TaskStatus.status.in_(active_statuses),
+                )
+            )
+        )
+        now = utc_now()
+        for task in tasks:
+            task.status = str(DeviceTaskStatus.FAILED)
+            task.error_code = "abandoned"
+            task.error_message = "Task was abandoned (stale queue entry cleared by operator)"
+            task.completed_at = now
+        self.session.flush()
+        return len(tasks)

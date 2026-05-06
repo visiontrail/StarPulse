@@ -267,6 +267,35 @@ def get_config_snapshot(
     return _snapshot_read(snapshot, repository)
 
 
+@router.delete(
+    "/{device_id}/tasks/stale",
+    status_code=status.HTTP_200_OK,
+    dependencies=[require_permission(PERM_DEVICE_MANAGE)],
+)
+def abandon_stale_tasks(
+    device_id: int,
+    request: Request,
+    session: SessionDep,
+    actor: CurrentUserDep,
+) -> dict[str, object]:
+    _ensure_device_exists(device_id, session)
+    count = DeviceRepository(session).abandon_stale_device_tasks(device_id)
+    write_audit_event(
+        session=session,
+        action=AuditAction.DEVICE_ONBOARDING_STEP_QUEUED,
+        outcome=AuditOutcome.SUCCESS,
+        actor_user_id=actor.id,
+        target_type="device",
+        target_id=str(device_id),
+        permission=PERM_DEVICE_MANAGE,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={"device_id": device_id, "abandoned_task_count": count},
+    )
+    session.commit()
+    return {"abandoned": count}
+
+
 @router.get(
     "/{device_id}/tasks",
     response_model=list[TaskRead],
@@ -430,8 +459,9 @@ def _onboarding_summary(
 
     has_connection = device.connection is not None
     has_credential = bool(device.connection and device.connection.has_credential)
+    connection_terminal = _last_terminal_task(recent_tasks, DeviceTaskType.CONNECTION_TEST)
     connection_ok = bool(
-        connection_task and connection_task.status == DeviceTaskStatus.SUCCEEDED
+        connection_terminal and connection_terminal.status == DeviceTaskStatus.SUCCEEDED
     )
     discovery_ok = device.last_discovery is not None
     baseline_ok = last_snapshot is not None
@@ -478,6 +508,16 @@ def _onboarding_summary(
 def _latest_task(recent_tasks: list[TaskStatus], task_type: DeviceTaskType) -> TaskStatus | None:
     for task in recent_tasks:
         if task.task_type == task_type:
+            return task
+    return None
+
+
+def _last_terminal_task(
+    recent_tasks: list[TaskStatus], task_type: DeviceTaskType
+) -> TaskStatus | None:
+    terminal = (DeviceTaskStatus.SUCCEEDED, DeviceTaskStatus.FAILED)
+    for task in recent_tasks:
+        if task.task_type == task_type and task.status in terminal:
             return task
     return None
 

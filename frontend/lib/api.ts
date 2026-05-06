@@ -15,8 +15,7 @@ import type {
   UserRead
 } from "@/lib/types";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000/api/v1";
+const API_BASE_URL = "/api/v1";
 
 export class ApiError extends Error {
   status: number;
@@ -293,6 +292,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ datastore })
     }),
+  abandonStaleTasks: (deviceId: number) =>
+    request<{ abandoned: number }>(`/devices/${deviceId}/tasks/stale`, { method: "DELETE" }),
 
   // Admin
   listUsers: () => request<UserRead[]>("/admin/users"),

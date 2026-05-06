@@ -68,7 +68,6 @@ export default function OperationsConsole() {
 
 function AuthenticatedConsole() {
   const { hasPermission } = useSession();
-  const [tab, setTab] = useState<Tab>("devices");
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode; perm: string }[] = [
     { id: "devices", label: "Devices", icon: <Router className="h-4 w-4" />, perm: PERM.DEVICE_READ },
@@ -86,6 +85,9 @@ function AuthenticatedConsole() {
       perm: PERM.AUDIT_READ_SUMMARY
     }
   ];
+
+  const availableTabs = tabs.filter(({ perm }) => hasPermission(perm));
+  const [tab, setTab] = useState<Tab>(() => availableTabs[0]?.id ?? "devices");
 
   return (
     <main className="min-h-screen text-ink">
@@ -119,10 +121,20 @@ function AuthenticatedConsole() {
       </div>
 
       <div className="p-4 md:p-6">
-        {tab === "devices" && hasPermission(PERM.DEVICE_READ) && <DevicesTab />}
-        {tab === "changes" && hasPermission(PERM.DEVICE_CHANGE_SUBMIT) && <ChangesTab />}
-        {tab === "admin" && hasPermission(PERM.USER_MANAGE) && <AdminTab />}
-        {tab === "audit" && hasPermission(PERM.AUDIT_READ_SUMMARY) && <AuditTab />}
+        {availableTabs.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 py-20 text-center">
+            <KeyRound className="h-8 w-8 text-muted" />
+            <p className="text-sm text-muted">您的账号尚未分配任何权限。</p>
+            <p className="text-xs text-muted">请联系管理员分配角色后重新登录。</p>
+          </div>
+        ) : (
+          <>
+            {tab === "devices" && hasPermission(PERM.DEVICE_READ) && <DevicesTab />}
+            {tab === "changes" && hasPermission(PERM.DEVICE_CHANGE_SUBMIT) && <ChangesTab />}
+            {tab === "admin" && hasPermission(PERM.USER_MANAGE) && <AdminTab />}
+            {tab === "audit" && hasPermission(PERM.AUDIT_READ_SUMMARY) && <AuditTab />}
+          </>
+        )}
       </div>
     </main>
   );
@@ -205,6 +217,20 @@ function DevicesTab() {
     try {
       const task = await api.collectSnapshot(selectedDeviceId, datastore);
       setLastTask(task);
+      await loadProfile(selectedDeviceId);
+      setSubmitState("loaded");
+    } catch (e) {
+      setSubmitState("error");
+      setError(errorMessage(e));
+    }
+  }
+
+  async function clearStaleTasks() {
+    if (!selectedDeviceId) return;
+    setSubmitState("loading");
+    setError(null);
+    try {
+      await api.abandonStaleTasks(selectedDeviceId);
       await loadProfile(selectedDeviceId);
       setSubmitState("loaded");
     } catch (e) {
@@ -358,8 +384,10 @@ function DevicesTab() {
                 <OnboardingPanel
                   profile={profile}
                   canCollect={canCollect}
+                  canManage={canManage}
                   busy={submitState === "loading"}
                   onRun={(step) => void runOnboardingTask(step)}
+                  onClearStale={() => void clearStaleTasks()}
                 />
                 <ReadOnlyPanel
                   profile={profile}
@@ -1550,15 +1578,25 @@ function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Prom
 function OnboardingPanel({
   profile,
   canCollect,
+  canManage,
   busy,
-  onRun
+  onRun,
+  onClearStale
 }: {
   profile: DeviceProfile | null;
   canCollect: boolean;
+  canManage: boolean;
   busy: boolean;
   onRun: (step: "connection" | "discovery" | "baseline") => void;
+  onClearStale: () => void;
 }) {
   const summary = profile?.onboarding_summary;
+  const hasStuckTasks = summary
+    ? [summary.connection, summary.discovery, summary.baseline].some(
+        (s) => s.status === "queued" || s.status === "running"
+      )
+    : false;
+
   return (
     <InfoPanel icon={<PlayCircle />} title="Onboarding">
       {summary ? (
@@ -1593,6 +1631,16 @@ function OnboardingPanel({
             >
               Baseline
             </Button>
+            {hasStuckTasks && canManage ? (
+              <Button
+                onClick={onClearStale}
+                disabled={busy}
+                className="h-8 px-2 text-xs bg-paper border border-warm text-warning"
+                title="Clear tasks stuck in QUEUED/RUNNING state (e.g. after a worker restart)"
+              >
+                <XCircle className="h-3.5 w-3.5" /> Clear Stuck
+              </Button>
+            ) : null}
           </div>
           <StatusBadge status={summary.ready_for_change ? "ready" : "blocked"} />
           {summary.blockers.length > 0 ? (
