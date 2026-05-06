@@ -90,9 +90,9 @@ function AuthenticatedConsole() {
   const [tab, setTab] = useState<Tab>(() => availableTabs[0]?.id ?? "devices");
 
   return (
-    <main className="min-h-screen text-ink">
+    <main className="flex min-h-screen min-h-dvh flex-col text-ink">
       {/* App bar */}
-      <div className="flex h-14 items-center justify-between border-b border-warm bg-canvas/95 px-4">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-warm bg-canvas/95 px-4">
         <div className="flex items-center gap-4">
           <div>
             <p className="font-mono text-[11px] uppercase text-muted">Star Pulse</p>
@@ -120,7 +120,7 @@ function AuthenticatedConsole() {
         <SessionHeader />
       </div>
 
-      <div className="p-4 md:p-6">
+      <div className="min-h-0 flex-1 p-2 md:p-3">
         {availableTabs.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-20 text-center">
             <KeyRound className="h-8 w-8 text-muted" />
@@ -260,9 +260,9 @@ function DevicesTab() {
   }
 
   return (
-    <div className="mx-auto grid max-w-[1440px] gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
-      <aside className="rounded border border-warm bg-canvas/95">
-        <div className="flex h-16 items-center justify-between border-b border-warm px-4">
+    <div className="grid h-full min-h-0 w-full grid-rows-[minmax(13rem,34dvh)_minmax(0,1fr)] gap-2 lg:grid-cols-[clamp(300px,22vw,420px)_minmax(0,1fr)] lg:grid-rows-none xl:gap-3">
+      <aside className="flex min-h-0 flex-col rounded border border-warm bg-canvas/95">
+        <div className="flex h-16 shrink-0 items-center justify-between border-b border-warm px-4">
           <h2 className="text-xl font-semibold">Operations</h2>
           <div className="flex items-center gap-2">
             {canManage ? (
@@ -284,7 +284,7 @@ function DevicesTab() {
             </Button>
           </div>
         </div>
-        <div className="p-3">
+        <div className="min-h-0 flex-1 overflow-auto p-3">
           {showCreate && canManage ? (
             <CreateDeviceForm
               onSuccess={async (deviceId) => {
@@ -316,16 +316,16 @@ function DevicesTab() {
         </div>
       </aside>
 
-      <section className="min-w-0 rounded border border-warm bg-canvas/95">
+      <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-warm bg-canvas/95">
         {selectedDevice === null && devicesState !== "loading" ? (
-          <div className="p-4">
+          <div className="flex min-h-0 flex-1 items-center justify-center p-4">
             <EmptyState icon={<HardDrive className="h-6 w-6" />} title="Select a device" />
           </div>
         ) : null}
 
         {selectedDevice !== null ? (
           <>
-            <header className="flex flex-col gap-4 border-b border-warm px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
+            <header className="flex shrink-0 flex-col gap-4 border-b border-warm px-4 py-4 xl:flex-row xl:items-center xl:justify-between">
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <StatusBadge status={profile?.status ?? selectedDevice.status} />
@@ -368,7 +368,7 @@ function DevicesTab() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="grid min-h-0 flex-1 gap-4 overflow-auto p-3 md:p-4 xl:grid-cols-[minmax(0,1fr)_clamp(320px,26vw,440px)]">
               <div className="space-y-4">
                 <ProfileGrid profile={profile} loading={profileState === "loading"} />
                 <SnapshotTable
