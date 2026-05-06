@@ -164,13 +164,22 @@ function errorBlockers(detail: unknown): string[] {
   return [];
 }
 
+function timeoutSignal(ms: number): { signal: AbortSignal; clear: () => void } {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  return { signal: controller.signal, clear: () => clearTimeout(id) };
+}
+
 async function tryRefresh(): Promise<boolean> {
+  const { signal, clear } = timeoutSignal(8000);
   try {
     const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: "POST",
       credentials: "include",
-      cache: "no-store"
+      cache: "no-store",
+      signal
     });
+    clear();
     if (!res.ok) return false;
     const data = (await res.json()) as { access_token: string };
     _accessToken = data.access_token;
@@ -178,6 +187,7 @@ async function tryRefresh(): Promise<boolean> {
     _onSessionRefreshed?.(me);
     return true;
   } catch {
+    clear();
     return false;
   }
 }
@@ -217,18 +227,22 @@ async function login(username: string, password: string): Promise<LoginResponse>
 }
 
 async function refreshSession(): Promise<CurrentUser | null> {
+  const { signal, clear } = timeoutSignal(8000);
   try {
     const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
       method: "POST",
       credentials: "include",
-      cache: "no-store"
+      cache: "no-store",
+      signal
     });
+    clear();
     if (!res.ok) return null;
     const data = (await res.json()) as { access_token: string };
     _accessToken = data.access_token;
     const me = await fetchCurrentUser();
     return me;
   } catch {
+    clear();
     return null;
   }
 }

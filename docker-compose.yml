@@ -7,6 +7,9 @@ services:
       STAR_PULSE_DATABASE_URL: postgresql+psycopg://star_pulse:star_pulse@postgres:5432/star_pulse
       STAR_PULSE_RABBITMQ_URL: amqp://star_pulse:star_pulse@rabbitmq:5672//
       STAR_PULSE_LOG_LEVEL: INFO
+      STAR_PULSE_CORS_ALLOWED_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      STAR_PULSE_BOOTSTRAP_ADMIN_USERNAME: admin
+      STAR_PULSE_BOOTSTRAP_ADMIN_PASSWORD: admin123!
     ports:
       - "8000:8000"
     volumes:

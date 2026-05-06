@@ -44,7 +44,9 @@ class Settings(BaseSettings):
     # Cookie / CORS
     cookie_secure: bool = False
     cookie_samesite: str = "lax"
-    cors_allowed_origins: list[str] = Field(default=["http://localhost:3000"])
+    cors_allowed_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://127.0.0.1:3000"]
+    )
 
     # Audit
     audit_retention_days: int = 90
