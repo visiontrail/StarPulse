@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.common.redaction import REDACTED, redact_sensitive
 from app.devices.repository import DeviceRepository
 from app.netconf.services import NetconfOperationResult
+from app.netconf.services.config_digest import parse_config_xml
 from app.storage.models import DeviceConfigSnapshot
 
 ROLLBACK_NORMALIZED_CONTENT_MAX_BYTES = 4 * 1024 * 1024  # 4 MB
@@ -122,7 +123,7 @@ def build_config_object_tree(content: str | None) -> dict[str, object] | None:
     if not content:
         return None
     try:
-        root = ElementTree.fromstring(content)
+        root = parse_config_xml(content)
     except ElementTree.ParseError:
         lines = [line.strip() for line in content.splitlines() if line.strip()]
         return {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from hashlib import sha256
+from ipaddress import ip_address
 from time import monotonic
 
 from app.auth.repositories import ChangeRequestRepository
@@ -328,7 +329,10 @@ def _connection_params(task: TaskStatus, session) -> NetconfConnectionParams:
     credential = CredentialService(session).resolve(connection.credential_ref)
     settings = get_settings()
     return NetconfConnectionParams(
-        host=connection.host,
+        host=_resolve_netconf_host(
+            connection.host,
+            loopback_host_override=settings.netconf_loopback_host_override,
+        ),
         port=connection.port,
         username=connection.username,
         password=credential.password,
@@ -337,6 +341,24 @@ def _connection_params(task: TaskStatus, session) -> NetconfConnectionParams:
         timeout=settings.netconf_default_timeout,
         hostkey_verify=settings.netconf_hostkey_verify,
     )
+
+
+def _resolve_netconf_host(host: str, *, loopback_host_override: str | None) -> str:
+    normalized = host.strip()
+    override = loopback_host_override.strip() if loopback_host_override else ""
+    if override and _is_loopback_host(normalized):
+        return override
+    return normalized
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().strip("[]").lower()
+    if normalized in {"localhost", "localhost."}:
+        return True
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 def _mark_running(repository: DeviceRepository, task: TaskStatus, started_at: float) -> None:

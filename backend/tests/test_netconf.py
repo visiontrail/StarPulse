@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.devices.constants import DeviceAccessErrorCode
+from app.netconf.adapters.ncclient_adapter import _reply_xml
 from app.netconf.client import NetconfConnectionParams
 from app.netconf.services import NetconfService
 from app.netconf.services.config_digest import config_digest, normalize_config_content
@@ -104,6 +105,17 @@ def test_netconf_service_config_read_maps_standard_errors_and_redacts_context() 
     assert result.context["private_key"] == "***REDACTED***"
 
 
+def test_ncclient_reply_prefers_parseable_data_xml_for_get_config() -> None:
+    class Reply:
+        data_xml = "<data><interfaces/></data>"
+        xml = "<rpc-reply><data><interfaces/></data></rpc-reply>"
+
+        def __str__(self) -> str:
+            return "<{urn:ietf:params:xml:ns:netconf:base:1.0}rpc-reply/>"
+
+    assert _reply_xml(Reply(), prefer_data=True) == "<data><interfaces/></data>"
+
+
 def test_config_digest_normalizes_equivalent_xml() -> None:
     first = "<config><interface name=\"xe0\"> up </interface></config>"
     second = """
@@ -114,6 +126,26 @@ def test_config_digest_normalizes_equivalent_xml() -> None:
 
     assert normalize_config_content(first) == normalize_config_content(second)
     assert config_digest(first) == config_digest(second)
+
+
+def test_config_digest_repairs_ncclient_clark_notation_reply() -> None:
+    pseudo_xml = (
+        '<{urn:ietf:params:xml:ns:netconf:base:1.0}rpc-reply message-id="1">'
+        "<{urn:ietf:params:xml:ns:netconf:base:1.0}data>"
+        "<{urn:ietf:params:xml:ns:yang:ietf-interfaces}interfaces>"
+        "<{urn:ietf:params:xml:ns:yang:ietf-interfaces}interface>"
+        "<{urn:ietf:params:xml:ns:yang:ietf-interfaces}name>eth0"
+        "</{urn:ietf:params:xml:ns:yang:ietf-interfaces}name>"
+        "</{urn:ietf:params:xml:ns:yang:ietf-interfaces}interface>"
+        "</{urn:ietf:params:xml:ns:yang:ietf-interfaces}interfaces>"
+        "</{urn:ietf:params:xml:ns:netconf:base:1.0}data>"
+        "</{urn:ietf:params:xml:ns:netconf:base:1.0}rpc-reply>"
+    )
+
+    normalized = normalize_config_content(pseudo_xml)
+
+    assert "eth0" in normalized
+    assert "<{" not in normalized
 
 
 def test_netconf_service_does_not_use_write_operations() -> None:

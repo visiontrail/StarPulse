@@ -141,6 +141,25 @@ def test_config_object_tree_parses_netconf_data_and_redacts_sensitive_leaves() -
     assert data["keystore"]["cleartext-private-key"] == REDACTED
 
 
+def test_config_object_tree_parses_existing_ncclient_clark_notation_snapshot() -> None:
+    tree = build_config_object_tree(
+        '<{urn:ietf:params:xml:ns:netconf:base:1.0}rpc-reply message-id="1">'
+        "<{urn:ietf:params:xml:ns:netconf:base:1.0}data>"
+        "<{urn:ietf:params:xml:ns:yang:ietf-interfaces}interfaces>"
+        "<{urn:ietf:params:xml:ns:yang:ietf-interfaces}interface>"
+        "<{urn:ietf:params:xml:ns:yang:ietf-interfaces}name>eth0"
+        "</{urn:ietf:params:xml:ns:yang:ietf-interfaces}name>"
+        "</{urn:ietf:params:xml:ns:yang:ietf-interfaces}interface>"
+        "</{urn:ietf:params:xml:ns:yang:ietf-interfaces}interfaces>"
+        "</{urn:ietf:params:xml:ns:netconf:base:1.0}data>"
+        "</{urn:ietf:params:xml:ns:netconf:base:1.0}rpc-reply>"
+    )
+
+    assert tree is not None
+    data = tree["rpc-reply"]["data"]
+    assert data["interfaces"]["interface"]["name"] == "eth0"
+
+
 def _device(db_session: Session) -> Device:
     device = Device(name="sat-router-config", status="ready")
     db_session.add(device)

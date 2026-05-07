@@ -34,6 +34,10 @@ Important environment variables:
 - `STAR_PULSE_CELERY_TASK_ALWAYS_EAGER`
 - `STAR_PULSE_NETCONF_DEFAULT_TIMEOUT`
 - `STAR_PULSE_NETCONF_HOSTKEY_VERIFY`
+- `STAR_PULSE_NETCONF_LOOPBACK_HOST_OVERRIDE` — optional NETCONF target host rewrite for local
+  Docker workflows. In `docker-compose.yml` this is set to `host.docker.internal`, so devices
+  configured as `127.0.0.1`, `::1`, or `localhost` reach a MockServer running on the host instead
+  of the worker container itself.
 - `STAR_PULSE_BASELINE_SNAPSHOT_FRESHNESS_MINUTES`
 - `NEXT_PUBLIC_API_BASE_URL` for the frontend, defaulting to `http://localhost:8000/api/v1`
 

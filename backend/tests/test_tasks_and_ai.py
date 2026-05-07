@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -233,6 +235,34 @@ def test_connection_test_task_records_success(
     assert task.error_code is None
 
 
+def test_device_task_rewrites_loopback_netconf_host_for_docker_worker(
+    db_session: Session, monkeypatch
+) -> None:
+    task_id, _ = _create_device_task_fixture(db_session, host="127.0.0.1")
+    monkeypatch.setattr("app.tasks.jobs.SessionLocal", _session_factory(db_session))
+    monkeypatch.setattr(
+        "app.tasks.jobs.get_settings",
+        lambda: SimpleNamespace(
+            netconf_default_timeout=30,
+            netconf_hostkey_verify=False,
+            netconf_loopback_host_override="host.docker.internal",
+        ),
+    )
+    seen_hosts: list[str] = []
+
+    class FakeService:
+        def test_connection(self, params):
+            seen_hosts.append(params.host)
+            return NetconfOperationResult(ok=True, summary={"connected": True})
+
+    monkeypatch.setattr("app.tasks.jobs.create_netconf_service", lambda: FakeService())
+
+    result = run_connection_test.run(task_id)
+
+    assert result["status"] == "succeeded"
+    assert seen_hosts == ["host.docker.internal"]
+
+
 def test_capability_discovery_task_records_result(
     db_session: Session, monkeypatch
 ) -> None:
@@ -371,12 +401,13 @@ def _create_device_task_fixture(
     *,
     task_type: str = "device.connection_test",
     metadata: dict[str, object] | None = None,
+    host: str = "192.0.2.31",
 ) -> tuple[str, int]:
     device = DeviceService(db_session).create_device(
         DeviceCreate(
             name=f"sat-router-{task_type}",
             connection={
-                "host": "192.0.2.31",
+                "host": host,
                 "username": "netconf",
                 "password": "task-secret",
             },

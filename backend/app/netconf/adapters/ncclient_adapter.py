@@ -34,7 +34,7 @@ class NcclientNetconfClient:
                     "<system-state xmlns=\"urn:ietf:params:xml:ns:yang:ietf-system\"/>"
                 )
                 result = session.get(filter=("subtree", system_state_filter))
-                return {"raw": str(result)}
+                return {"raw": _reply_xml(result)}
         except NetconfProtocolError:
             return {}
         except NetconfError:
@@ -49,7 +49,7 @@ class NcclientNetconfClient:
         try:
             with self._connect(params) as session:
                 result = session.get_config(source=datastore)
-                return str(result)
+                return _reply_xml(result, prefer_data=True)
         except NetconfError:
             raise
         except Exception as exc:
@@ -83,6 +83,24 @@ class NcclientNetconfClient:
             )
         except Exception as exc:
             raise _map_exception(exc, params) from exc
+
+
+def _reply_xml(reply: object, *, prefer_data: bool = False) -> str:
+    attrs = ("data_xml", "xml") if prefer_data else ("xml", "data_xml")
+    for attr in attrs:
+        try:
+            value = getattr(reply, attr, None)
+        except Exception:
+            value = None
+        if value:
+            return _xml_value_to_string(value)
+    return str(reply)
+
+
+def _xml_value_to_string(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
 
 
 def _map_exception(exc: Exception, params: NetconfConnectionParams) -> Exception:

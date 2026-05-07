@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     netconf_default_timeout: int = 30
     netconf_hostkey_verify: bool = False
+    netconf_loopback_host_override: str | None = None
     baseline_snapshot_freshness_minutes: int = 60
 
     ai_agent_sdk_provider: str = "claude-agent-sdk"
