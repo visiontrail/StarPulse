@@ -64,6 +64,23 @@ type Tab = "devices" | "changes" | "admin" | "audit";
 type DeviceListMode = "collapsed" | "compact" | "expanded";
 type DeviceDetailMode = "operational" | "config";
 type RefreshOptions = { silent?: boolean };
+type ConfigChangeAction = "edit-leaf" | "add-leaf" | "delete-leaf" | "add-instance" | "delete-instance";
+
+type ConfigChangeTarget = {
+  action: ConfigChangeAction;
+  path: string;
+  label: string;
+  currentValue?: unknown;
+};
+
+type ConfigLeafRow = {
+  path: string;
+  label: string;
+  relativePath: string;
+  value: unknown;
+  valueType: string;
+  instanceLabel?: string;
+};
 
 const REALTIME_FAST_REFRESH_MS = 1500;
 const REALTIME_NORMAL_REFRESH_MS = 4000;
@@ -188,7 +205,6 @@ function DevicesTab() {
   const [changeSummary, setChangeSummary] = useState("");
   const [changeReason, setChangeReason] = useState("");
   const [configBody, setConfigBody] = useState("");
-  const [leafDrafts, setLeafDrafts] = useState<Record<string, string>>({});
   const [preflight, setPreflight] = useState<ChangePreflightResponse | null>(null);
   const [devicesState, setDevicesState] = useState<LoadState>("idle");
   const [profileState, setProfileState] = useState<LoadState>("idle");
@@ -278,7 +294,6 @@ function DevicesTab() {
     else { setProfile(null); setSnapshots([]); }
     setSelectedObjectPath("root");
     setPreflight(null);
-    setLeafDrafts({});
   }, [loadProfile, selectedDeviceId]);
 
   useEffect(() => {
@@ -466,7 +481,6 @@ function DevicesTab() {
       setChangeSummary("");
       setChangeReason("");
       setConfigBody("");
-      setLeafDrafts({});
       setPreflight(null);
       await loadProfile(selectedDeviceId);
       setChangeSubmitState("loaded");
@@ -562,7 +576,6 @@ function DevicesTab() {
             changeSummary={changeSummary}
             changeReason={changeReason}
             configBody={configBody}
-            leafDrafts={leafDrafts}
             preflight={preflight}
             onDetailModeChange={setDetailMode}
             onCollapseWorkspace={() => setWorkspaceCollapsed(true)}
@@ -581,10 +594,6 @@ function DevicesTab() {
             }}
             onConfigBodyChange={(value) => {
               setConfigBody(value);
-              setPreflight(null);
-            }}
-            onLeafDraftChange={(path, value) => {
-              setLeafDrafts((current) => ({ ...current, [path]: value }));
               setPreflight(null);
             }}
             onPreviewChange={() => void previewConfigChange()}
@@ -716,7 +725,6 @@ function DeviceStatusPane({
             {t("devices.statusHistory")}
           </p>
         </div>
-        <StatusBadge status={profile?.status ?? "idle"} />
       </aside>
     );
   }
@@ -1087,7 +1095,6 @@ function DeviceWorkspace({
   changeSummary,
   changeReason,
   configBody,
-  leafDrafts,
   preflight,
   onDetailModeChange,
   onCollapseWorkspace,
@@ -1099,7 +1106,6 @@ function DeviceWorkspace({
   onChangeSummaryChange,
   onChangeReasonChange,
   onConfigBodyChange,
-  onLeafDraftChange,
   onPreviewChange,
   onSubmitChange
 }: {
@@ -1121,7 +1127,6 @@ function DeviceWorkspace({
   changeSummary: string;
   changeReason: string;
   configBody: string;
-  leafDrafts: Record<string, string>;
   preflight: ChangePreflightResponse | null;
   onDetailModeChange: (mode: DeviceDetailMode) => void;
   onCollapseWorkspace: () => void;
@@ -1133,7 +1138,6 @@ function DeviceWorkspace({
   onChangeSummaryChange: (value: string) => void;
   onChangeReasonChange: (value: string) => void;
   onConfigBodyChange: (value: string) => void;
-  onLeafDraftChange: (path: string, value: string) => void;
   onPreviewChange: () => void;
   onSubmitChange: () => void;
 }) {
@@ -1146,12 +1150,16 @@ function DeviceWorkspace({
     () => buildConfigTree(device, datastore, snapshots),
     [datastore, device, snapshots]
   );
+  const [changeTarget, setChangeTarget] = useState<ConfigChangeTarget | null>(null);
   const modeDisabledReason = readyForChange
     ? null
     : profile?.onboarding_summary?.blockers.join(", ") || t("onboarding.incomplete");
 
-  function editTreeLeaf(path: string, value: string) {
-    onLeafDraftChange(path, value);
+  function openConfigChange(target: ConfigChangeTarget) {
+    setChangeTarget(target);
+    onChangeSummaryChange(defaultConfigChangeSummary(target));
+    onChangeReasonChange("");
+    onConfigBodyChange(buildConfigChangePayload(target.action, target.path, target.currentValue));
   }
 
   return (
@@ -1245,41 +1253,376 @@ function DeviceWorkspace({
           </InfoPanel>
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_clamp(360px,32vw,520px)]">
-          <InfoPanel icon={<Settings2 />} title={t("workspace.configTree")}>
-            <ObjectTree
-              data={configTree}
-              selectedPath={selectedPath}
-              editable
-              onSelectPath={onSelectPath}
-              onLeafChange={editTreeLeaf}
-            />
-          </InfoPanel>
-          <ConfigEditPanel
-            device={device}
-            datastore={datastore}
-            canSubmitChange={canSubmitChange}
-            disabledReason={modeDisabledReason}
-            busy={changeBusy}
-            changeSummary={changeSummary}
-            changeReason={changeReason}
-            configBody={configBody}
-            preflight={preflight}
-            onChangeSummaryChange={onChangeSummaryChange}
-            onChangeReasonChange={onChangeReasonChange}
-            onConfigBodyChange={onConfigBodyChange}
-            onPreview={onPreviewChange}
-            onSubmit={onSubmitChange}
+        <div className="min-h-0 flex-1 overflow-auto p-3">
+          <ConfigModelWorkspace
+            data={configTree}
+            selectedPath={selectedPath}
+            onSelectPath={onSelectPath}
+            onOpenChange={openConfigChange}
           />
+          {changeTarget ? (
+            <ConfigChangeDialog
+              device={device}
+              datastore={datastore}
+              target={changeTarget}
+              canSubmitChange={canSubmitChange}
+              disabledReason={modeDisabledReason}
+              busy={changeBusy}
+              changeSummary={changeSummary}
+              changeReason={changeReason}
+              configBody={configBody}
+              preflight={preflight}
+              onChangeSummaryChange={onChangeSummaryChange}
+              onChangeReasonChange={onChangeReasonChange}
+              onConfigBodyChange={onConfigBodyChange}
+              onClose={() => setChangeTarget(null)}
+              onPreview={onPreviewChange}
+              onSubmit={onSubmitChange}
+            />
+          ) : null}
         </div>
       )}
     </>
   );
 }
 
-function ConfigEditPanel({
+function ConfigModelWorkspace({
+  data,
+  selectedPath,
+  onSelectPath,
+  onOpenChange
+}: {
+  data: Record<string, unknown>;
+  selectedPath: string;
+  onSelectPath: (path: string) => void;
+  onOpenChange: (target: ConfigChangeTarget) => void;
+}) {
+  const t = useT();
+  const selectedValue = getTreeValueAtPath(data, selectedPath);
+  const effectivePath = isObjectLike(selectedValue) ? selectedPath : "root";
+  const effectiveValue = isObjectLike(selectedValue) ? selectedValue : data;
+  const leafRows = useMemo(
+    () => collectLeafRows(effectiveValue, effectivePath),
+    [effectivePath, effectiveValue]
+  );
+  const isMultiInstance = Array.isArray(effectiveValue);
+  const instanceRows = isMultiInstance
+    ? effectiveValue.map((item, index) => ({
+        path: `${effectivePath}.${index}`,
+        label: `#${index + 1}`,
+        value: item
+      }))
+    : [];
+
+  return (
+    <div className="grid min-h-[520px] gap-3 xl:grid-cols-[minmax(260px,0.34fr)_minmax(0,1fr)]">
+      <InfoPanel icon={<Settings2 />} title={t("workspace.configTree")}>
+        <ParentObjectTree
+          data={data}
+          selectedPath={effectivePath}
+          onSelectPath={onSelectPath}
+        />
+      </InfoPanel>
+
+      <InfoPanel icon={<FilePenLine />} title="叶子节点表格">
+        <div className="min-h-0 space-y-3">
+          <div className="flex flex-col gap-2 border-b border-warm pb-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="truncate font-mono text-[11px] text-muted">{effectivePath}</p>
+              <p className="mt-1 text-xs text-muted">
+                {isMultiInstance ? "多实例列表" : t("tree.childrenCount", { count: leafRows.length })}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              {isMultiInstance ? (
+                <Button
+                  className="h-8 px-2 text-xs"
+                  onClick={() =>
+                    onOpenChange({
+                      action: "add-instance",
+                      path: `${effectivePath}.*`,
+                      label: "新增实例",
+                      currentValue: {}
+                    })
+                  }
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden />
+                  新增实例
+                </Button>
+              ) : (
+                <Button
+                  className="h-8 px-2 text-xs"
+                  onClick={() =>
+                    onOpenChange({
+                      action: "add-leaf",
+                      path: `${effectivePath}.new_leaf`,
+                      label: "新增叶子",
+                      currentValue: ""
+                    })
+                  }
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden />
+                  新增叶子
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {isMultiInstance && instanceRows.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {instanceRows.map((instance) => (
+                <button
+                  key={instance.path}
+                  type="button"
+                  onClick={() =>
+                    onOpenChange({
+                      action: "delete-instance",
+                      path: instance.path,
+                      label: `删除实例 ${instance.label}`,
+                      currentValue: instance.value
+                    })
+                  }
+                  className="inline-flex h-8 items-center gap-1.5 rounded border border-warm bg-paper px-2 font-mono text-[11px] text-muted transition hover:border-error/50 hover:text-error"
+                  title="删除实例"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  {instance.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="overflow-auto rounded border border-warm bg-paper/70">
+            <table className="min-w-full text-left text-xs">
+              <thead className="sticky top-0 bg-paper text-muted">
+                <tr className="border-b border-warm">
+                  <th className="px-3 py-2 font-medium">叶子节点</th>
+                  <th className="px-3 py-2 font-medium">实例</th>
+                  <th className="px-3 py-2 font-medium">类型</th>
+                  <th className="px-3 py-2 font-medium">当前值</th>
+                  <th className="px-3 py-2 text-right font-medium">{t("table.actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leafRows.map((row) => (
+                  <tr key={row.path} className="border-b border-warm/70 last:border-0 hover:bg-canvas/70">
+                    <td className="max-w-[280px] px-3 py-2">
+                      <p className="truncate font-medium text-ink" title={row.relativePath}>
+                        {row.relativePath}
+                      </p>
+                      <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={row.path}>
+                        {row.path}
+                      </p>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-[11px] text-muted">
+                      {row.instanceLabel ?? "-"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className="rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] uppercase text-muted">
+                        {row.valueType}
+                      </span>
+                    </td>
+                    <td className="max-w-[360px] px-3 py-2">
+                      <p className="truncate font-mono text-[11px] text-muted" title={formatTreeValue(row.value)}>
+                        {formatTreeValue(row.value) || "-"}
+                      </p>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex justify-end gap-1.5">
+                        <Button
+                          aria-label="修改叶子节点"
+                          title="修改叶子节点"
+                          className="h-8 w-8 bg-canvas px-0"
+                          onClick={() =>
+                            onOpenChange({
+                              action: "edit-leaf",
+                              path: row.path,
+                              label: row.relativePath,
+                              currentValue: row.value
+                            })
+                          }
+                        >
+                          <FilePenLine className="h-3.5 w-3.5" aria-hidden />
+                        </Button>
+                        <Button
+                          aria-label="删除叶子节点"
+                          title="删除叶子节点"
+                          className="h-8 w-8 bg-canvas px-0 text-error"
+                          onClick={() =>
+                            onOpenChange({
+                              action: "delete-leaf",
+                              path: row.path,
+                              label: row.relativePath,
+                              currentValue: row.value
+                            })
+                          }
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {leafRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-10">
+                      <EmptyState icon={<FilePenLine className="h-6 w-6" />} title="暂无叶子节点" />
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </InfoPanel>
+    </div>
+  );
+}
+
+function ParentObjectTree({
+  data,
+  selectedPath,
+  onSelectPath
+}: {
+  data: unknown;
+  selectedPath: string;
+  onSelectPath: (path: string) => void;
+}) {
+  const t = useT();
+  const [openPaths, setOpenPaths] = useState<Set<string>>(
+    () => new Set(["root", "root.data"])
+  );
+
+  function toggle(path: string) {
+    setOpenPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  function expandAll() {
+    const paths = new Set<string>();
+    collectObjectPaths(data, "root", paths);
+    setOpenPaths(paths);
+  }
+
+  function collapseAll() {
+    setOpenPaths(new Set(["root"]));
+  }
+
+  return (
+    <div className="min-h-0">
+      <div className="mb-3 flex items-center justify-between gap-2 border-b border-warm pb-3">
+        <p className="min-w-0 truncate font-mono text-[11px] text-muted">{selectedPath}</p>
+        <div className="flex shrink-0 gap-1.5">
+          <Button aria-label={t("common.expandAll")} title={t("common.expandAll")} onClick={expandAll} className="h-8 w-8 bg-paper px-0">
+            <ChevronsRight className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+          <Button aria-label={t("common.collapseAll")} title={t("common.collapseAll")} onClick={collapseAll} className="h-8 w-8 bg-paper px-0">
+            <ChevronsLeft className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        </div>
+      </div>
+      <div className="max-h-[64dvh] overflow-auto rounded border border-warm bg-paper/70 p-2">
+        <ParentTreeRows
+          label="root"
+          value={data}
+          path="root"
+          depth={0}
+          openPaths={openPaths}
+          selectedPath={selectedPath}
+          onToggle={toggle}
+          onSelectPath={onSelectPath}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ParentTreeRows({
+  label,
+  value,
+  path,
+  depth,
+  openPaths,
+  selectedPath,
+  onToggle,
+  onSelectPath
+}: {
+  label: string;
+  value: unknown;
+  path: string;
+  depth: number;
+  openPaths: Set<string>;
+  selectedPath: string;
+  onToggle: (path: string) => void;
+  onSelectPath: (path: string) => void;
+}) {
+  const t = useT();
+  if (!isObjectLike(value)) return null;
+  const open = openPaths.has(path);
+  const entries = objectEntries(value);
+  const childParents = entries.filter(([, childValue]) => isObjectLike(childValue));
+  const leafCount = countLeaves(value);
+
+  return (
+    <div>
+      <div
+        className={cn(
+          "grid min-h-9 grid-cols-[minmax(140px,1fr)_auto] items-center gap-2 rounded px-2 text-sm transition",
+          selectedPath === path ? "bg-canvas" : "hover:bg-canvas/70"
+        )}
+        style={{ paddingLeft: `${8 + depth * 16}px` }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            onSelectPath(path);
+            if (childParents.length > 0) onToggle(path);
+          }}
+          className="flex min-w-0 items-center gap-1.5 text-left"
+        >
+          {childParents.length > 0 ? (
+            open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <span className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="truncate font-medium">{label}</span>
+          <span className="shrink-0 rounded border border-warm bg-paper px-1.5 font-mono text-[10px] uppercase text-muted">
+            {treeType(value)}
+          </span>
+        </button>
+        <span className="font-mono text-[10px] text-muted">
+          {t("tree.itemsCount", { count: leafCount })}
+        </span>
+      </div>
+      {open && childParents.length > 0 ? (
+        <div>
+          {childParents.map(([childLabel, childValue]) => (
+            <ParentTreeRows
+              key={`${path}.${childLabel}`}
+              label={childLabel}
+              value={childValue}
+              path={`${path}.${childLabel}`}
+              depth={depth + 1}
+              openPaths={openPaths}
+              selectedPath={selectedPath}
+              onToggle={onToggle}
+              onSelectPath={onSelectPath}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ConfigChangeDialog({
   device,
   datastore,
+  target,
   canSubmitChange,
   disabledReason,
   busy,
@@ -1290,11 +1633,13 @@ function ConfigEditPanel({
   onChangeSummaryChange,
   onChangeReasonChange,
   onConfigBodyChange,
+  onClose,
   onPreview,
   onSubmit
 }: {
   device: Device;
   datastore: string;
+  target: ConfigChangeTarget;
   canSubmitChange: boolean;
   disabledReason: string | null;
   busy: boolean;
@@ -1305,50 +1650,109 @@ function ConfigEditPanel({
   onChangeSummaryChange: (value: string) => void;
   onChangeReasonChange: (value: string) => void;
   onConfigBodyChange: (value: string) => void;
+  onClose: () => void;
   onPreview: () => void;
   onSubmit: () => void;
 }) {
   const t = useT();
+  const [targetPath, setTargetPath] = useState(target.path);
+  const [targetValue, setTargetValue] = useState(formatTreeValue(target.currentValue));
   const blocked = !canSubmitChange || Boolean(disabledReason);
   const missingRequired = !changeSummary.trim() || !changeReason.trim() || !configBody.trim();
+
+  useEffect(() => {
+    setTargetPath(target.path);
+    setTargetValue(formatTreeValue(target.currentValue));
+  }, [target]);
+
+  function updateGeneratedPayload(path: string, value: string) {
+    if (target.action === "delete-leaf" || target.action === "delete-instance") {
+      onConfigBodyChange(buildConfigChangePayload(target.action, path, target.currentValue));
+      return;
+    }
+    onConfigBodyChange(buildConfigChangePayload(target.action, path, value));
+  }
+
   return (
-    <InfoPanel icon={<FilePenLine />} title={t("change.controlTitle")}>
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Metric label={t("common.device")} value={`#${device.id}`} />
-          <Metric label={t("common.datastore")} value={datastore} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/35 p-3 backdrop-blur-sm">
+      <div className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded border border-warm bg-canvas shadow-2xl">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-warm px-4 py-3">
+          <div className="min-w-0">
+            <p className="font-mono text-[11px] uppercase text-muted">{configChangeActionLabel(target.action)}</p>
+            <h3 className="mt-1 truncate text-lg font-semibold">{t("change.controlTitle")}</h3>
+            <p className="mt-1 truncate font-mono text-xs text-muted">{target.label}</p>
+          </div>
+          <Button aria-label={t("common.cancel")} title={t("common.cancel")} onClick={onClose} className="h-8 w-8 bg-paper px-0">
+            <XCircle className="h-4 w-4" aria-hidden />
+          </Button>
         </div>
-        <div>
-          <FieldLabel>{t("change.summary")}</FieldLabel>
-          <input
-            value={changeSummary}
-            onChange={(event) => onChangeSummaryChange(event.target.value)}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
-          />
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 py-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Metric label={t("common.device")} value={`#${device.id}`} />
+            <Metric label={t("common.datastore")} value={datastore} />
+          </div>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+            <div>
+              <FieldLabel>目标路径</FieldLabel>
+              <input
+                value={targetPath}
+                onChange={(event) => {
+                  setTargetPath(event.target.value);
+                  updateGeneratedPayload(event.target.value, targetValue);
+                }}
+                className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
+              />
+            </div>
+            <div>
+              <FieldLabel>目标值</FieldLabel>
+              <input
+                value={targetValue}
+                disabled={target.action === "delete-leaf" || target.action === "delete-instance"}
+                onChange={(event) => {
+                  setTargetValue(event.target.value);
+                  updateGeneratedPayload(targetPath, event.target.value);
+                }}
+                className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong disabled:opacity-60"
+              />
+            </div>
+          </div>
+          <div>
+            <FieldLabel>{t("change.summary")}</FieldLabel>
+            <input
+              value={changeSummary}
+              onChange={(event) => onChangeSummaryChange(event.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
+            />
+          </div>
+          <div>
+            <FieldLabel>{t("change.reason")}</FieldLabel>
+            <textarea
+              value={changeReason}
+              onChange={(event) => onChangeReasonChange(event.target.value)}
+              rows={3}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
+            />
+          </div>
+          <div>
+            <FieldLabel>{t("change.netconfPayload")}</FieldLabel>
+            <textarea
+              value={configBody}
+              onChange={(event) => onConfigBodyChange(event.target.value)}
+              rows={10}
+              spellCheck={false}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
+            />
+          </div>
+          {preflight ? <PreflightSummary preflight={preflight} compact /> : null}
+          {!canSubmitChange ? <p className="text-xs text-warn">{t("change.requireSubmitPerm")}</p> : null}
+          {disabledReason ? <p className="text-xs text-warn">{disabledReason}</p> : null}
         </div>
-        <div>
-          <FieldLabel>{t("change.reason")}</FieldLabel>
-          <textarea
-            value={changeReason}
-            onChange={(event) => onChangeReasonChange(event.target.value)}
-            rows={3}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
-          />
-        </div>
-        <div>
-          <FieldLabel>{t("change.netconfPayload")}</FieldLabel>
-          <textarea
-            value={configBody}
-            onChange={(event) => onConfigBodyChange(event.target.value)}
-            rows={12}
-            spellCheck={false}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
-          />
-        </div>
-        {preflight ? <PreflightSummary preflight={preflight} compact /> : null}
-        {!canSubmitChange ? <p className="text-xs text-warn">{t("change.requireSubmitPerm")}</p> : null}
-        {disabledReason ? <p className="text-xs text-warn">{disabledReason}</p> : null}
-        <div className="flex flex-wrap gap-2">
+
+        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-warm px-4 py-3">
+          <Button onClick={onClose} className="bg-paper">
+            {t("common.cancel")}
+          </Button>
           <Button
             onClick={onPreview}
             busy={busy}
@@ -1367,7 +1771,7 @@ function ConfigEditPanel({
           </Button>
         </div>
       </div>
-    </InfoPanel>
+    </div>
   );
 }
 
@@ -1646,6 +2050,95 @@ function formatTreeValue(value: unknown) {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
+}
+
+function getTreeValueAtPath(data: unknown, path: string): unknown {
+  if (path === "root") return data;
+  const segments = path.split(".").slice(1);
+  let current = data;
+  for (const segment of segments) {
+    if (!isObjectLike(current)) return undefined;
+    current = Array.isArray(current)
+      ? current[Number(segment)]
+      : (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function collectLeafRows(value: unknown, basePath: string): ConfigLeafRow[] {
+  const rows: ConfigLeafRow[] = [];
+
+  function walk(node: unknown, path: string) {
+    if (!isObjectLike(node)) {
+      const relativePath = path === basePath ? "." : path.slice(basePath.length + 1);
+      const segments = relativePath.split(".");
+      const instanceIndex = segments.findIndex((segment) => /^\d+$/.test(segment));
+      const instanceLabel = instanceIndex >= 0 ? `#${Number(segments[instanceIndex]) + 1}` : undefined;
+      rows.push({
+        path,
+        label: segments[segments.length - 1] ?? path,
+        relativePath,
+        value: node,
+        valueType: treeType(node),
+        instanceLabel
+      });
+      return;
+    }
+    for (const [label, child] of objectEntries(node)) {
+      walk(child, `${path}.${label}`);
+    }
+  }
+
+  walk(value, basePath);
+  return rows;
+}
+
+function countLeaves(value: unknown): number {
+  if (!isObjectLike(value)) return 1;
+  return objectEntries(value).reduce((total, [, child]) => total + countLeaves(child), 0);
+}
+
+function defaultConfigChangeSummary(target: ConfigChangeTarget) {
+  return `${configChangeActionLabel(target.action)} ${target.path}`;
+}
+
+function configChangeActionLabel(action: ConfigChangeAction) {
+  switch (action) {
+    case "edit-leaf":
+      return "修改叶子节点";
+    case "add-leaf":
+      return "新增叶子节点";
+    case "delete-leaf":
+      return "删除叶子节点";
+    case "add-instance":
+      return "新增实例";
+    case "delete-instance":
+      return "删除实例";
+  }
+}
+
+function buildConfigChangePayload(action: ConfigChangeAction, path: string, value: unknown) {
+  const operation =
+    action === "delete-leaf" || action === "delete-instance"
+      ? "delete"
+      : action === "add-leaf" || action === "add-instance"
+        ? "create"
+        : "replace";
+  const body = operation === "delete"
+    ? ""
+    : `\n  <value>${escapeXmlText(formatTreeValue(value))}</value>\n`;
+  return `<config-change operation="${operation}" path="${escapeXmlAttribute(path)}">${body}</config-change>`;
+}
+
+function escapeXmlText(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function escapeXmlAttribute(value: string) {
+  return escapeXmlText(value).replaceAll("\"", "&quot;");
 }
 
 function clamp(value: number, min: number, max: number) {
