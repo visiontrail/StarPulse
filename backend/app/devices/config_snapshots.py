@@ -174,7 +174,7 @@ def build_snapshot_summary(
     safe_read_summary = redact_sensitive(read_summary)
     safe_read_summary.pop("config_content", None)
     safe_read_summary.pop("normalized_content", None)
-    return {
+    summary = {
         "datastore": datastore,
         "content_digest": content_digest,
         "collected_at": collected_at.isoformat(),
@@ -182,6 +182,9 @@ def build_snapshot_summary(
         "normalized_length": safe_read_summary.get("normalized_length"),
         "diff": diff_summary,
     }
+    if "yang_models" in safe_read_summary:
+        summary["yang_models"] = safe_read_summary["yang_models"]
+    return summary
 
 
 def _as_aware(value: datetime) -> datetime:

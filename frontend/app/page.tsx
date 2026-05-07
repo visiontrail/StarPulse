@@ -34,7 +34,7 @@ import {
   Users,
   XCircle
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandMark } from "@/components/brand";
 import { LoginView, SessionHeader } from "@/components/auth";
@@ -77,6 +77,7 @@ type ConfigChangeTarget = {
   path: string;
   label: string;
   currentValue?: unknown;
+  schema?: YangNodeInfo | null;
 };
 
 type ConfigLeafRow = {
@@ -86,6 +87,8 @@ type ConfigLeafRow = {
   value: unknown;
   valueType: string;
   instanceLabel?: string;
+  namespace?: string | null;
+  schema?: YangNodeInfo | null;
 };
 
 type ConfigListTableColumn = {
@@ -98,6 +101,7 @@ type ConfigListTableCell = {
   label: string;
   value: unknown;
   valueType: string;
+  schema?: YangNodeInfo | null;
 };
 
 type ConfigListTableRow = {
@@ -110,6 +114,47 @@ type ConfigListTableRow = {
 type ConfigListTable = {
   columns: ConfigListTableColumn[];
   rows: ConfigListTableRow[];
+};
+
+type YangEnumOption = {
+  name: string;
+  value?: string | number | null;
+  description?: string | null;
+};
+
+type YangNodeInfo = {
+  name?: string;
+  qname?: string;
+  path?: string;
+  absolute_path?: string;
+  module?: string;
+  namespace?: string;
+  prefix?: string;
+  kind?: string;
+  node_type?: string;
+  type?: string;
+  base_type?: string;
+  type_name?: string;
+  description?: string | null;
+  units?: string | null;
+  default?: unknown;
+  mandatory?: boolean;
+  config?: boolean;
+  status?: string;
+  range?: string | null;
+  length?: string | null;
+  pattern?: string | null;
+  key?: string | string[] | null;
+  leafref_path?: string | null;
+  enum_values?: Array<string | YangEnumOption>;
+  values?: Array<string | YangEnumOption>;
+  options?: Array<string | YangEnumOption>;
+};
+
+type YangSchemaIndex = {
+  byPath: Map<string, YangNodeInfo>;
+  byNamespacePath: Map<string, YangNodeInfo>;
+  byName: Map<string, YangNodeInfo[]>;
 };
 
 const REALTIME_FAST_REFRESH_MS = 1500;
@@ -162,29 +207,27 @@ function AuthenticatedConsole() {
   return (
     <main className="flex min-h-screen min-h-dvh flex-col text-ink">
       {/* App bar */}
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-warm bg-canvas/95 px-4">
-        <div className="flex items-center gap-4">
-          <BrandMark className="h-9 w-[170px] sm:h-10 sm:w-[190px]" />
-          <nav className="flex gap-1">
-            {tabs.map(({ id, label, icon, perm }) =>
-              hasPermission(perm) ? (
-                <button
-                  key={id}
-                  onClick={() => setTab(id)}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded px-3 py-1.5 text-sm transition",
-                    tab === id
-                      ? "bg-paper font-semibold text-ink"
-                      : "text-muted hover:text-ink"
-                  )}
-                >
-                  {icon}
-                  {label}
-                </button>
-              ) : null
-            )}
-          </nav>
-        </div>
+      <div className="relative flex h-14 shrink-0 items-center justify-between border-b border-warm bg-canvas/95 px-4">
+        <BrandMark className="h-9 w-[170px] sm:h-10 sm:w-[190px]" />
+        <nav className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 gap-1">
+          {tabs.map(({ id, label, icon, perm }) =>
+            hasPermission(perm) ? (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={cn(
+                  "pointer-events-auto flex items-center gap-1.5 rounded px-3 py-1.5 text-sm transition",
+                  tab === id
+                    ? "bg-paper font-semibold text-ink"
+                    : "text-muted hover:text-ink"
+                )}
+              >
+                {icon}
+                {label}
+              </button>
+            ) : null
+          )}
+        </nav>
         <div className="flex items-center gap-3">
           <SessionHeader />
         </div>
@@ -1180,6 +1223,10 @@ function DeviceWorkspace({
     () => buildConfigTree(device, datastore, snapshots),
     [datastore, device, snapshots]
   );
+  const yangSchemaIndex = useMemo(
+    () => buildYangSchemaIndex(profile, snapshots),
+    [profile, snapshots]
+  );
   const [changeTarget, setChangeTarget] = useState<ConfigChangeTarget | null>(null);
   const modeDisabledReason = readyForChange
     ? null
@@ -1286,6 +1333,7 @@ function DeviceWorkspace({
         <div className="min-h-0 flex-1 overflow-auto p-3">
           <ConfigModelWorkspace
             data={configTree}
+            schemaIndex={yangSchemaIndex}
             selectedPath={selectedPath}
             onSelectPath={onSelectPath}
             onOpenChange={openConfigChange}
@@ -1318,11 +1366,13 @@ function DeviceWorkspace({
 
 function ConfigModelWorkspace({
   data,
+  schemaIndex,
   selectedPath,
   onSelectPath,
   onOpenChange
 }: {
   data: Record<string, unknown>;
+  schemaIndex: YangSchemaIndex;
   selectedPath: string;
   onSelectPath: (path: string) => void;
   onOpenChange: (target: ConfigChangeTarget) => void;
@@ -1332,14 +1382,15 @@ function ConfigModelWorkspace({
   const effectivePath = isObjectLike(selectedValue) ? selectedPath : "root";
   const effectiveValue = isObjectLike(selectedValue) ? selectedValue : data;
   const leafRows = useMemo(
-    () => collectLeafRows(effectiveValue, effectivePath),
-    [effectivePath, effectiveValue]
+    () => collectLeafRows(effectiveValue, effectivePath, data, schemaIndex),
+    [data, effectivePath, effectiveValue, schemaIndex]
   );
   const isMultiInstance = Array.isArray(effectiveValue);
   const listTable = useMemo(
-    () => (Array.isArray(effectiveValue) ? collectListTable(effectiveValue, effectivePath) : null),
-    [effectivePath, effectiveValue]
+    () => (Array.isArray(effectiveValue) ? collectListTable(effectiveValue, effectivePath, data, schemaIndex) : null),
+    [data, effectivePath, effectiveValue, schemaIndex]
   );
+  const hasYangModel = schemaIndex.byPath.size + schemaIndex.byNamespacePath.size > 0;
 
   return (
     <div className="grid min-h-[520px] gap-3 xl:grid-cols-[minmax(260px,0.34fr)_minmax(0,1fr)]">
@@ -1358,6 +1409,8 @@ function ConfigModelWorkspace({
               <p className="truncate font-mono text-[11px] text-muted">{effectivePath}</p>
               <p className="mt-1 text-xs text-muted">
                 {isMultiInstance ? "多实例列表" : t("tree.childrenCount", { count: leafRows.length })}
+                {" · "}
+                {hasYangModel ? "已关联 YANG 模型" : "未发现 YANG 模型元数据"}
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
@@ -1369,7 +1422,8 @@ function ConfigModelWorkspace({
                       action: "add-instance",
                       path: `${effectivePath}.*`,
                       label: "新增实例",
-                      currentValue: {}
+                      currentValue: {},
+                      schema: matchYangNode(schemaIndex, `${effectivePath}.*`, data)
                     })
                   }
                 >
@@ -1384,7 +1438,8 @@ function ConfigModelWorkspace({
                       action: "add-leaf",
                       path: `${effectivePath}.new_leaf`,
                       label: "新增叶子",
-                      currentValue: ""
+                      currentValue: "",
+                      schema: null
                     })
                   }
                 >
@@ -1447,7 +1502,7 @@ function ListInstanceTable({
                           {formatTreeValue(cell.value) || "-"}
                         </p>
                         <span className="mt-1 inline-flex rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] uppercase text-muted">
-                          {cell.valueType}
+                          {displayYangType(cell.schema, cell.value)}
                         </span>
                       </div>
                     ) : (
@@ -1467,7 +1522,8 @@ function ListInstanceTable({
                         action: "edit-instance",
                         path: row.path,
                         label: `编辑实例 ${row.label}`,
-                        currentValue: row.value
+                        currentValue: row.value,
+                        schema: null
                       })
                     }
                   >
@@ -1482,7 +1538,8 @@ function ListInstanceTable({
                         action: "delete-instance",
                         path: row.path,
                         label: `删除实例 ${row.label}`,
-                        currentValue: row.value
+                        currentValue: row.value,
+                        schema: null
                       })
                     }
                   >
@@ -1521,7 +1578,8 @@ function LeafDetailTable({
           <tr className="border-b border-warm">
             <th className="px-3 py-2 font-medium">叶子节点</th>
             <th className="px-3 py-2 font-medium">实例</th>
-            <th className="px-3 py-2 font-medium">类型</th>
+            <th className="px-3 py-2 font-medium">YANG 模型</th>
+            <th className="px-3 py-2 font-medium">类型 / 约束</th>
             <th className="px-3 py-2 font-medium">当前值</th>
             <th className="px-3 py-2 text-right font-medium">{t("table.actions")}</th>
           </tr>
@@ -1541,9 +1599,30 @@ function LeafDetailTable({
                 {row.instanceLabel ?? "-"}
               </td>
               <td className="px-3 py-2">
-                <span className="rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] uppercase text-muted">
-                  {row.valueType}
-                </span>
+                <div className="max-w-[220px]">
+                  <p className="truncate font-mono text-[11px] text-ink" title={yangModuleLabel(row.schema)}>
+                    {yangModuleLabel(row.schema)}
+                  </p>
+                  <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={row.schema?.namespace ?? row.namespace ?? ""}>
+                    {row.schema?.kind ?? row.schema?.node_type ?? "leaf"}
+                  </p>
+                </div>
+              </td>
+              <td className="px-3 py-2">
+                <div className="flex max-w-[260px] flex-wrap gap-1.5">
+                  <span className="rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] uppercase text-muted">
+                    {displayYangType(row.schema, row.value)}
+                  </span>
+                  {yangConstraintBadges(row.schema).map((badge) => (
+                    <span
+                      key={badge}
+                      className="rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] text-muted"
+                      title={badge}
+                    >
+                      {badge}
+                    </span>
+                  ))}
+                </div>
               </td>
               <td className="max-w-[360px] px-3 py-2">
                 <p className="truncate font-mono text-[11px] text-muted" title={formatTreeValue(row.value)}>
@@ -1561,7 +1640,8 @@ function LeafDetailTable({
                         action: "edit-leaf",
                         path: row.path,
                         label: row.relativePath,
-                        currentValue: row.value
+                        currentValue: row.value,
+                        schema: row.schema ?? null
                       })
                     }
                   >
@@ -1576,7 +1656,8 @@ function LeafDetailTable({
                         action: "delete-leaf",
                         path: row.path,
                         label: row.relativePath,
-                        currentValue: row.value
+                        currentValue: row.value,
+                        schema: row.schema ?? null
                       })
                     }
                   >
@@ -1588,7 +1669,7 @@ function LeafDetailTable({
           ))}
           {leafRows.length === 0 ? (
             <tr>
-              <td colSpan={5} className="px-3 py-10">
+              <td colSpan={6} className="px-3 py-10">
                 <EmptyState icon={<FilePenLine className="h-6 w-6" />} title="暂无叶子节点" />
               </td>
             </tr>
@@ -1778,11 +1859,13 @@ function ConfigChangeDialog({
   const [targetPath, setTargetPath] = useState(target.path);
   const [targetValue, setTargetValue] = useState(formatTreeValue(target.currentValue));
   const blocked = !canSubmitChange || Boolean(disabledReason);
-  const missingRequired = !changeSummary.trim() || !changeReason.trim() || !configBody.trim();
+  const isDeleteAction = target.action === "delete-leaf" || target.action === "delete-instance";
+  const missingRequired = !changeSummary.trim() || !changeReason.trim() || (!isDeleteAction && !configBody.trim());
 
   useEffect(() => {
     setTargetPath(target.path);
-    setTargetValue(formatTreeValue(target.currentValue));
+    const nextValue = formatInputValueForSchema(target.currentValue, target.schema);
+    setTargetValue(nextValue);
   }, [target]);
 
   function updateGeneratedPayload(path: string, value: string) {
@@ -1812,7 +1895,7 @@ function ConfigChangeDialog({
             <Metric label={t("common.device")} value={`#${device.id}`} />
             <Metric label={t("common.datastore")} value={datastore} />
           </div>
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div>
               <FieldLabel>目标路径</FieldLabel>
               <input
@@ -1825,31 +1908,27 @@ function ConfigChangeDialog({
               />
             </div>
             <div>
-              <FieldLabel>目标值</FieldLabel>
-              {target.action === "edit-instance" || target.action === "add-instance" ? (
-                <textarea
-                  value={targetValue}
-                  onChange={(event) => {
-                    setTargetValue(event.target.value);
-                    updateGeneratedPayload(targetPath, event.target.value);
-                  }}
-                  rows={5}
-                  spellCheck={false}
-                  className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
-                />
-              ) : (
-                <input
-                  value={targetValue}
-                  disabled={target.action === "delete-leaf" || target.action === "delete-instance"}
-                  onChange={(event) => {
-                    setTargetValue(event.target.value);
-                    updateGeneratedPayload(targetPath, event.target.value);
-                  }}
-                  className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong disabled:opacity-60"
-                />
-              )}
+              <FieldLabel>YANG 类型</FieldLabel>
+              <div className="mt-1 min-h-9 rounded border border-warm bg-paper px-2 py-1.5">
+                <p className="truncate font-mono text-xs text-ink">
+                  {displayYangType(target.schema, target.currentValue)}
+                </p>
+                <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={yangNodePathLabel(target.schema)}>
+                  {yangNodePathLabel(target.schema)}
+                </p>
+              </div>
             </div>
           </div>
+          <TypedYangValueEditor
+            action={target.action}
+            schema={target.schema}
+            value={targetValue}
+            currentValue={target.currentValue}
+            onChange={(value) => {
+              setTargetValue(value);
+              updateGeneratedPayload(targetPath, value);
+            }}
+          />
           <div>
             <FieldLabel>{t("change.summary")}</FieldLabel>
             <input
@@ -1867,15 +1946,12 @@ function ConfigChangeDialog({
               className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
             />
           </div>
-          <div>
-            <FieldLabel>{t("change.netconfPayload")}</FieldLabel>
-            <textarea
-              value={configBody}
-              onChange={(event) => onConfigBodyChange(event.target.value)}
-              rows={10}
-              spellCheck={false}
-              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
-            />
+          <div className="rounded border border-warm bg-paper p-3">
+            <div className="grid gap-2 text-xs text-muted sm:grid-cols-3">
+              <Metric label="操作" value={configChangeActionLabel(target.action)} />
+              <Metric label="模型" value={yangModuleLabel(target.schema)} />
+              <Metric label="内部请求大小" value={`${configBody.length} bytes`} />
+            </div>
           </div>
           {preflight ? <PreflightSummary preflight={preflight} compact /> : null}
           {!canSubmitChange ? <p className="text-xs text-warn">{t("change.requireSubmitPerm")}</p> : null}
@@ -1904,6 +1980,158 @@ function ConfigChangeDialog({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function TypedYangValueEditor({
+  action,
+  schema,
+  value,
+  currentValue,
+  onChange
+}: {
+  action: ConfigChangeAction;
+  schema?: YangNodeInfo | null;
+  value: string;
+  currentValue: unknown;
+  onChange: (value: string) => void;
+}) {
+  const isDeleteAction = action === "delete-leaf" || action === "delete-instance";
+  const yangType = normalizedYangType(schema, currentValue);
+  const enumOptions = yangEnumOptions(schema);
+  const range = yangRange(schema);
+  const isInstance = action === "edit-instance" || action === "add-instance";
+
+  if (isDeleteAction) {
+    return (
+      <div className="rounded border border-error/20 bg-error/10 p-3 text-xs text-error">
+        删除操作不需要填写目标值；提交前仍会执行服务端预检。
+      </div>
+    );
+  }
+
+  if (isInstance) {
+    return (
+      <div>
+        <FieldLabel>实例内容</FieldLabel>
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          rows={6}
+          spellCheck={false}
+          className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
+        />
+      </div>
+    );
+  }
+
+  if (enumOptions.length > 0) {
+    return (
+      <div>
+        <FieldLabel>目标值</FieldLabel>
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="mt-1 h-9 w-full rounded border border-warm bg-paper px-2 text-sm outline-none focus:border-warm-strong"
+        >
+          {enumOptions.map((option) => (
+            <option key={option.name} value={option.name}>
+              {option.name}{option.value !== undefined && option.value !== null ? ` (${option.value})` : ""}
+            </option>
+          ))}
+        </select>
+        <YangInputHint schema={schema} />
+      </div>
+    );
+  }
+
+  if (yangType === "boolean" || yangType === "bool") {
+    return (
+      <div>
+        <FieldLabel>目标值</FieldLabel>
+        <div className="mt-1 grid w-full max-w-xs grid-cols-2 gap-1 rounded border border-warm bg-paper p-1">
+          {["true", "false"].map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onChange(option)}
+              className={cn(
+                "h-8 rounded px-2 text-sm font-medium transition",
+                value === option ? "bg-canvas text-ink shadow-panel" : "text-muted hover:text-ink"
+              )}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+        <YangInputHint schema={schema} />
+      </div>
+    );
+  }
+
+  if (yangType === "empty") {
+    return (
+      <label className="flex items-center gap-2 rounded border border-warm bg-paper px-3 py-2 text-sm">
+        <input
+          type="checkbox"
+          checked={value === "true" || value === ""}
+          onChange={(event) => onChange(event.target.checked ? "true" : "false")}
+          className="h-4 w-4"
+        />
+        <span>设置 presence leaf</span>
+      </label>
+    );
+  }
+
+  if (isNumericYangType(yangType)) {
+    return (
+      <div>
+        <FieldLabel>目标值</FieldLabel>
+        <input
+          type="number"
+          value={value}
+          min={range?.min}
+          max={range?.max}
+          step={yangType === "decimal64" ? "any" : "1"}
+          onChange={(event) => onChange(event.target.value)}
+          className="mt-1 h-9 w-full rounded border border-warm bg-paper px-2 font-mono text-sm outline-none focus:border-warm-strong"
+        />
+        <YangInputHint schema={schema} />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <FieldLabel>目标值</FieldLabel>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-9 w-full rounded border border-warm bg-paper px-2 font-mono text-sm outline-none focus:border-warm-strong"
+      />
+      <YangInputHint schema={schema} />
+    </div>
+  );
+}
+
+function YangInputHint({ schema }: { schema?: YangNodeInfo | null }) {
+  const badges = yangConstraintBadges(schema);
+  if (!schema && badges.length === 0) {
+    return <p className="mt-1 text-xs text-muted">未匹配到 get-schema 节点定义，按当前值类型兜底。</p>;
+  }
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {badges.map((badge) => (
+        <span key={badge} className="rounded border border-warm bg-paper px-1.5 font-mono text-[10px] text-muted">
+          {badge}
+        </span>
+      ))}
+      {schema?.description ? (
+        <span className="min-w-0 flex-1 truncate text-xs text-muted" title={schema.description}>
+          {schema.description}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -2153,6 +2381,525 @@ function buildConfigTree(
   };
 }
 
+function buildYangSchemaIndex(profile: DeviceProfile | null, snapshots: ConfigSnapshot[]): YangSchemaIndex {
+  const nodes = extractYangNodes(profile, snapshots);
+  const byPath = new Map<string, YangNodeInfo>();
+  const byNamespacePath = new Map<string, YangNodeInfo>();
+  const byName = new Map<string, YangNodeInfo[]>();
+
+  for (const node of nodes) {
+    const normalizedPaths = [
+      node.path,
+      node.absolute_path,
+      node.qname,
+    ]
+      .map((path) => normalizeYangPath(path))
+      .filter(Boolean);
+    for (const path of normalizedPaths) {
+      byPath.set(path, node);
+      if (node.namespace) byNamespacePath.set(`${node.namespace}|${path}`, node);
+    }
+    const name = normalizeYangName(node.name ?? node.qname ?? lastPathSegment(node.path ?? node.absolute_path));
+    if (name) {
+      const list = byName.get(name) ?? [];
+      list.push(node);
+      byName.set(name, list);
+    }
+  }
+
+  return { byPath, byNamespacePath, byName };
+}
+
+function extractYangNodes(profile: DeviceProfile | null, snapshots: ConfigSnapshot[]): YangNodeInfo[] {
+  const roots = [
+    profile?.system_info,
+    profile?.last_discovery?.summary,
+    profile?.metadata,
+    ...snapshots.map((snapshot) => snapshot.summary),
+    ...snapshots.map((snapshot) => snapshot.diff_summary),
+  ];
+  const nodes: YangNodeInfo[] = [];
+  const seen = new Set<string>();
+  for (const root of roots) {
+    collectYangNodes(root, nodes, seen);
+  }
+  return nodes;
+}
+
+function collectYangNodes(value: unknown, nodes: YangNodeInfo[], seen: Set<string>) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectYangNodes(item, nodes, seen);
+    return;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (looksLikeYangNode(record)) {
+    const node = normalizeYangNode(record);
+    const key = `${node.namespace ?? ""}|${node.path ?? node.absolute_path ?? ""}|${node.name ?? ""}|${node.type ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      nodes.push(node);
+    }
+  }
+
+  for (const [key, child] of Object.entries(record)) {
+    if (key === "raw" || key === "config_tree") continue;
+    if (typeof child === "string" && mayContainYangSource(key, child)) {
+      for (const parsedNode of parseYangModuleNodes(child)) {
+        const nodeKey = `${parsedNode.namespace ?? ""}|${parsedNode.path ?? ""}|${parsedNode.name ?? ""}|${parsedNode.type ?? ""}`;
+        if (!seen.has(nodeKey)) {
+          seen.add(nodeKey);
+          nodes.push(parsedNode);
+        }
+      }
+      continue;
+    }
+    if (key === "nodes" && child && typeof child === "object" && !Array.isArray(child)) {
+      for (const [nodePath, nodeValue] of Object.entries(child as Record<string, unknown>)) {
+        if (nodeValue && typeof nodeValue === "object" && !Array.isArray(nodeValue)) {
+          collectYangNodes({ ...(nodeValue as Record<string, unknown>), path: nodePath }, nodes, seen);
+        }
+      }
+      continue;
+    }
+    collectYangNodes(child, nodes, seen);
+  }
+}
+
+function mayContainYangSource(key: string, value: string): boolean {
+  const loweredKey = key.toLowerCase();
+  if (!loweredKey.includes("yang") && !loweredKey.includes("schema")) return false;
+  return /\b(module|submodule)\s+[-\w.]+\s*\{/.test(value) && /\bnamespace\s+["'][^"']+["']\s*;/.test(value);
+}
+
+function parseYangModuleNodes(source: string): YangNodeInfo[] {
+  const text = stripYangComments(source);
+  const moduleName = matchYangString(text, /\bmodule\s+([-\w.]+)\s*\{/);
+  const namespace = matchYangString(text, /\bnamespace\s+["']([^"']+)["']\s*;/);
+  const prefix = matchYangString(text, /\bprefix\s+["']?([-\w.]+)["']?\s*;/);
+  const rootStart = text.indexOf("{");
+  const rootEnd = rootStart >= 0 ? findMatchingBrace(text, rootStart) : -1;
+  if (rootStart < 0 || rootEnd < 0) return [];
+  const body = text.slice(rootStart + 1, rootEnd);
+  const nodes: YangNodeInfo[] = [];
+  collectYangBlocks(body, {
+    module: moduleName,
+    namespace,
+    prefix,
+    parentPath: "",
+    inheritedConfig: undefined,
+    nodes,
+  });
+  return nodes;
+}
+
+function collectYangBlocks(
+  text: string,
+  context: {
+    module?: string;
+    namespace?: string;
+    prefix?: string;
+    parentPath: string;
+    inheritedConfig?: boolean;
+    nodes: YangNodeInfo[];
+  }
+) {
+  const nodeRegex = /\b(container|list|leaf|leaf-list)\s+([-\w:.]+)\s*(\{|;)/g;
+  let match: RegExpExecArray | null;
+  while ((match = nodeRegex.exec(text)) !== null) {
+    const kind = match[1];
+    const name = normalizeYangName(match[2]);
+    const startsBlock = match[3] === "{";
+    const openIndex = text.indexOf("{", match.index);
+    const closeIndex = startsBlock ? findMatchingBrace(text, openIndex) : -1;
+    const body = startsBlock && closeIndex > openIndex ? text.slice(openIndex + 1, closeIndex) : "";
+    const path = context.parentPath ? `${context.parentPath}/${name}` : `/${name}`;
+    const config = parseYangBoolean(body, "config") ?? context.inheritedConfig;
+    const node: YangNodeInfo = {
+      name,
+      path,
+      module: context.module,
+      namespace: context.namespace,
+      prefix: context.prefix,
+      kind,
+      node_type: kind,
+      type: parseYangType(body),
+      enum_values: parseYangEnums(body),
+      range: parseYangTypeArgument(body, "range"),
+      length: parseYangTypeArgument(body, "length"),
+      pattern: parseYangTypeArgument(body, "pattern"),
+      units: matchYangString(body, /\bunits\s+["']?([^"';]+)["']?\s*;/),
+      default: matchYangString(body, /\bdefault\s+["']?([^"';]+)["']?\s*;/),
+      mandatory: parseYangBoolean(body, "mandatory"),
+      config,
+      status: matchYangString(body, /\bstatus\s+([-\w]+)\s*;/),
+      description: matchYangString(body, /\bdescription\s+"([^"]*)"\s*;/),
+      key: matchYangString(body, /\bkey\s+"([^"]+)"\s*;/),
+    };
+    context.nodes.push(node);
+    if (body) {
+      collectYangBlocks(body, {
+        ...context,
+        parentPath: path,
+        inheritedConfig: config,
+      });
+    }
+    if (closeIndex > match.index) nodeRegex.lastIndex = closeIndex + 1;
+  }
+}
+
+function parseYangType(body: string): string | undefined {
+  const typeMatch = /\btype\s+([-\w:.]+)\s*(\{|;)/.exec(body);
+  return typeMatch ? normalizeYangName(typeMatch[1]) : undefined;
+}
+
+function parseYangEnums(body: string): YangEnumOption[] | undefined {
+  const typeMatch = /\btype\s+enumeration\s*\{/.exec(body);
+  if (!typeMatch) return undefined;
+  const openIndex = body.indexOf("{", typeMatch.index);
+  const closeIndex = findMatchingBrace(body, openIndex);
+  if (closeIndex <= openIndex) return undefined;
+  const typeBody = body.slice(openIndex + 1, closeIndex);
+  const values: YangEnumOption[] = [];
+  const enumRegex = /\benum\s+([-\w:.]+)\s*(\{|;)/g;
+  let match: RegExpExecArray | null;
+  while ((match = enumRegex.exec(typeBody)) !== null) {
+    const name = normalizeYangName(match[1]);
+    const blockStart = typeBody.indexOf("{", match.index);
+    const blockEnd = match[2] === "{" ? findMatchingBrace(typeBody, blockStart) : -1;
+    const enumBody = blockEnd > blockStart ? typeBody.slice(blockStart + 1, blockEnd) : "";
+    values.push({
+      name,
+      value: matchYangString(enumBody, /\bvalue\s+(-?\d+)\s*;/) ?? null,
+      description: matchYangString(enumBody, /\bdescription\s+"([^"]*)"\s*;/) ?? null,
+    });
+    if (blockEnd > match.index) enumRegex.lastIndex = blockEnd + 1;
+  }
+  return values.length > 0 ? values : undefined;
+}
+
+function parseYangTypeArgument(body: string, argument: "range" | "length" | "pattern"): string | undefined {
+  const regex = new RegExp(`\\b${argument}\\s+["']?([^;"']+)["']?\\s*;`);
+  return matchYangString(body, regex);
+}
+
+function parseYangBoolean(body: string, field: "mandatory" | "config"): boolean | undefined {
+  const raw = matchYangString(body, new RegExp(`\\b${field}\\s+(true|false)\\s*;`));
+  return raw === undefined ? undefined : raw === "true";
+}
+
+function stripYangComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+function findMatchingBrace(text: string, openIndex: number): number {
+  if (openIndex < 0 || text[openIndex] !== "{") return -1;
+  let depth = 0;
+  let quote: string | null = null;
+  for (let index = openIndex; index < text.length; index += 1) {
+    const char = text[index];
+    const prev = text[index - 1];
+    if (quote) {
+      if (char === quote && prev !== "\\") quote = null;
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function matchYangString(text: string, regex: RegExp): string | undefined {
+  const match = regex.exec(text);
+  return match?.[1]?.trim();
+}
+
+function looksLikeYangNode(record: Record<string, unknown>): boolean {
+  const hasType = ["type", "base_type", "type_name"].some((key) => typeof record[key] === "string");
+  const hasPath = ["path", "absolute_path", "qname", "name"].some((key) => typeof record[key] === "string");
+  const kind = String(record.kind ?? record.node_type ?? "").toLowerCase();
+  return hasPath && (hasType || ["leaf", "leaf-list", "container", "list"].includes(kind));
+}
+
+function normalizeYangNode(record: Record<string, unknown>): YangNodeInfo {
+  const stringList = (value: unknown): Array<string | YangEnumOption> | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    return value
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") {
+          const obj = item as Record<string, unknown>;
+          const name = String(obj.name ?? obj.label ?? obj.value ?? "");
+          if (!name) return null;
+          return {
+            name,
+            value: typeof obj.value === "string" || typeof obj.value === "number" ? obj.value : null,
+            description: typeof obj.description === "string" ? obj.description : null,
+          };
+        }
+        return null;
+      })
+      .filter(Boolean) as Array<string | YangEnumOption>;
+  };
+
+  return {
+    name: asString(record.name) ?? normalizeYangName(asString(record.qname) ?? lastPathSegment(asString(record.path) ?? asString(record.absolute_path))),
+    qname: asString(record.qname),
+    path: asString(record.path),
+    absolute_path: asString(record.absolute_path),
+    module: asString(record.module) ?? asString(record.module_name),
+    namespace: asString(record.namespace) ?? asString(record.xmlns) ?? asString(record.module_namespace),
+    prefix: asString(record.prefix),
+    kind: asString(record.kind) ?? asString(record.node_type),
+    node_type: asString(record.node_type),
+    type: asString(record.type) ?? asString(record.type_name) ?? asString(record.base_type),
+    base_type: asString(record.base_type),
+    type_name: asString(record.type_name),
+    description: asString(record.description),
+    units: asString(record.units),
+    default: record.default,
+    mandatory: asBoolean(record.mandatory),
+    config: asBoolean(record.config),
+    status: asString(record.status),
+    range: asString(record.range),
+    length: asString(record.length),
+    pattern: asString(record.pattern),
+    key: typeof record.key === "string" || Array.isArray(record.key) ? record.key as string | string[] : null,
+    leafref_path: asString(record.leafref_path) ?? asString(record.path_arg),
+    enum_values: stringList(record.enum_values ?? record.enums),
+    values: stringList(record.values),
+    options: stringList(record.options),
+  };
+}
+
+function matchYangNode(
+  index: YangSchemaIndex,
+  path: string,
+  root: unknown
+): YangNodeInfo | null {
+  const normalizedPath = normalizeUiPath(path);
+  const namespace = namespaceForPath(root, path);
+  if (namespace) {
+    const direct = index.byNamespacePath.get(`${namespace}|${normalizedPath}`);
+    if (direct) return direct;
+  }
+  const direct = index.byPath.get(normalizedPath);
+  if (direct) return direct;
+
+  for (const [schemaPath, node] of index.byPath.entries()) {
+    if (normalizedPath.endsWith(schemaPath) || schemaPath.endsWith(normalizedPath)) {
+      if (!namespace || !node.namespace || node.namespace === namespace) return node;
+    }
+  }
+
+  const looseSuffixMatches = Array.from(index.byPath.entries())
+    .filter(([schemaPath]) => schemaPath.split(".").length >= 2 && normalizedPath.endsWith(schemaPath))
+    .map(([, node]) => node);
+  const looseSuffixNode = uniqueYangNode(looseSuffixMatches);
+  if (looseSuffixNode) return looseSuffixNode;
+
+  const localName = lastPathSegment(path);
+  const candidates = index.byName.get(normalizeYangName(localName)) ?? [];
+  if (namespace) {
+    const byNamespace = candidates.find((node) => node.namespace === namespace);
+    if (byNamespace) return byNamespace;
+  }
+  const contextMatch = chooseYangNodeByContext(normalizedPath, candidates);
+  if (contextMatch) return contextMatch;
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function uniqueYangNode(candidates: YangNodeInfo[]): YangNodeInfo | null {
+  const keyed = new Map<string, YangNodeInfo>();
+  for (const candidate of candidates) {
+    const key = `${candidate.namespace ?? ""}|${candidate.path ?? ""}|${candidate.type ?? ""}|${candidate.kind ?? ""}`;
+    keyed.set(key, candidate);
+  }
+  return keyed.size === 1 ? Array.from(keyed.values())[0] : null;
+}
+
+function chooseYangNodeByContext(normalizedPath: string, candidates: YangNodeInfo[]): YangNodeInfo | null {
+  const leafCandidates = candidates.filter((node) => {
+    const kind = (node.kind ?? node.node_type ?? "").toLowerCase();
+    return kind === "leaf" || kind === "leaf-list" || (!kind && normalizedYangType(node) !== "node");
+  });
+  if (leafCandidates.length === 0) return null;
+
+  const scored = leafCandidates
+    .map((node) => ({ node, score: yangContextScore(normalizedPath, node) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (scored.length === 0) return null;
+  if (scored.length === 1 || scored[0].score > scored[1].score) return scored[0].node;
+  return null;
+}
+
+function yangContextScore(normalizedPath: string, node: YangNodeInfo): number {
+  let score = 0;
+  const type = normalizedYangType(node);
+  const schemaPath = normalizeYangPath(node.path ?? node.absolute_path ?? node.qname);
+  if (schemaPath && normalizedPath.endsWith(schemaPath)) score += 80;
+  if (normalizedPath.includes("public-key") || normalizedPath.includes("host-key")) {
+    if (type.includes("asymmetric")) score += 40;
+    if (type.includes("symmetric")) score -= 20;
+  }
+  if (normalizedPath.includes("symmetric") && type.includes("symmetric")) score += 30;
+  if (normalizedPath.includes("certificate") && type.includes("cert")) score += 20;
+  if (type && type !== "string") score += 5;
+  return score;
+}
+
+function namespaceForPath(root: unknown, path: string): string | null {
+  if (path === "root") return null;
+  const segments = path.split(".").slice(1).filter((segment) => segment !== "*");
+  let current = root;
+  let namespace: string | null = null;
+  for (const segment of segments) {
+    if (!isObjectLike(current)) return namespace;
+    if (!Array.isArray(current) && typeof (current as Record<string, unknown>)["_namespace"] === "string") {
+      namespace = (current as Record<string, unknown>)["_namespace"] as string;
+    }
+    current = Array.isArray(current)
+      ? current[Number(segment)]
+      : (current as Record<string, unknown>)[segment];
+  }
+  return namespace;
+}
+
+function normalizeUiPath(path: string): string {
+  return path
+    .split(".")
+    .filter((segment) => segment !== "root" && segment !== "data" && segment !== "rpc-reply")
+    .filter((segment) => !/^\d+$/.test(segment) && segment !== "*")
+    .filter((segment) => !segment.startsWith("_"))
+    .map(normalizeYangName)
+    .filter(Boolean)
+    .join(".");
+}
+
+function normalizeYangPath(path: string | undefined | null): string {
+  if (!path) return "";
+  return path
+    .replace(/\[[^\]]+\]/g, "")
+    .split(/[/.]/)
+    .map((part) => normalizeYangName(part.trim()))
+    .filter((part) => part && part !== "root" && part !== "data" && part !== "rpc-reply")
+    .join(".");
+}
+
+function normalizeYangName(name: string | undefined | null): string {
+  if (!name) return "";
+  return name.replace(/^.*:/, "").replace(/\[[^\]]+\]/g, "").trim();
+}
+
+function lastPathSegment(path: string | undefined | null): string {
+  if (!path) return "";
+  const segments = path.split(/[/.]/).filter(Boolean);
+  return normalizeYangName(segments[segments.length - 1] ?? "");
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizedYangType(schema: YangNodeInfo | null | undefined, currentValue?: unknown): string {
+  const raw = schema?.base_type ?? schema?.type ?? schema?.type_name;
+  if (raw) return raw.replace(/^.*:/, "").toLowerCase();
+  if (typeof currentValue === "boolean") return "boolean";
+  if (typeof currentValue === "number") return Number.isInteger(currentValue) ? "int32" : "decimal64";
+  return treeType(currentValue);
+}
+
+function displayYangType(schema: YangNodeInfo | null | undefined, currentValue?: unknown): string {
+  const type = schema?.type ?? schema?.type_name ?? schema?.base_type;
+  if (type) return type;
+  return treeType(currentValue);
+}
+
+function yangModuleLabel(schema: YangNodeInfo | null | undefined): string {
+  if (!schema) return "未匹配";
+  return schema.module ?? schema.prefix ?? schema.namespace ?? "YANG";
+}
+
+function yangNodePathLabel(schema: YangNodeInfo | null | undefined): string {
+  if (!schema) return "未匹配 get-schema 节点";
+  return schema.absolute_path ?? schema.path ?? schema.qname ?? schema.name ?? "YANG node";
+}
+
+function yangConstraintBadges(schema: YangNodeInfo | null | undefined): string[] {
+  if (!schema) return [];
+  const badges: string[] = [];
+  if (schema.mandatory) badges.push("mandatory");
+  if (schema.config === false) badges.push("read-only");
+  if (schema.range) badges.push(`range ${schema.range}`);
+  if (schema.length) badges.push(`length ${schema.length}`);
+  if (schema.pattern) badges.push("pattern");
+  if (schema.units) badges.push(schema.units);
+  if (schema.default !== undefined && schema.default !== null) badges.push(`default ${formatTreeValue(schema.default)}`);
+  const enumCount = yangEnumOptions(schema).length;
+  if (enumCount > 0) badges.push(`${enumCount} enums`);
+  return badges;
+}
+
+function yangEnumOptions(schema: YangNodeInfo | null | undefined): YangEnumOption[] {
+  const options = schema?.enum_values ?? schema?.values ?? schema?.options ?? [];
+  return options
+    .map((option) =>
+      typeof option === "string"
+        ? { name: option }
+        : { name: option.name, value: option.value, description: option.description }
+    )
+    .filter((option) => option.name);
+}
+
+function yangRange(schema: YangNodeInfo | null | undefined): { min?: string; max?: string } | null {
+  const range = schema?.range;
+  if (!range || range.includes("|")) return null;
+  const [min, max] = range.split("..").map((part) => part.trim());
+  if (!min && !max) return null;
+  return {
+    min: min && min !== "min" ? min : undefined,
+    max: max && max !== "max" ? max : undefined,
+  };
+}
+
+function isNumericYangType(type: string): boolean {
+  return [
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "decimal64",
+  ].includes(type);
+}
+
+function formatInputValueForSchema(value: unknown, schema?: YangNodeInfo | null): string {
+  const enumOptions = yangEnumOptions(schema);
+  if ((value === undefined || value === null || value === "") && enumOptions.length > 0) {
+    return enumOptions[0]?.name ?? "";
+  }
+  const type = normalizedYangType(schema, value);
+  if ((type === "boolean" || type === "bool") && typeof value !== "boolean") {
+    return String(value).toLowerCase() === "false" ? "false" : "true";
+  }
+  return formatTreeValue(value);
+}
 
 function isObjectLike(value: unknown): value is Record<string, unknown> | unknown[] {
   return value !== null && typeof value === "object";
@@ -2198,26 +2945,37 @@ function getTreeValueAtPath(data: unknown, path: string): unknown {
   return current;
 }
 
-function collectLeafRows(value: unknown, basePath: string): ConfigLeafRow[] {
+function collectLeafRows(
+  value: unknown,
+  basePath: string,
+  root: unknown,
+  schemaIndex: YangSchemaIndex
+): ConfigLeafRow[] {
   const rows: ConfigLeafRow[] = [];
 
   function walk(node: unknown, path: string) {
+    if (isInternalTreeMetadataPath(path, basePath)) return;
     if (!isObjectLike(node)) {
       const relativePath = path === basePath ? "." : path.slice(basePath.length + 1);
       const segments = relativePath.split(".");
       const instanceIndex = segments.findIndex((segment) => /^\d+$/.test(segment));
       const instanceLabel = instanceIndex >= 0 ? `#${Number(segments[instanceIndex]) + 1}` : undefined;
+      const schema = matchYangNode(schemaIndex, path, root);
+      const namespace = namespaceForPath(root, path);
       rows.push({
         path,
         label: segments[segments.length - 1] ?? path,
         relativePath,
         value: node,
-        valueType: treeType(node),
-        instanceLabel
+        valueType: displayYangType(schema, node),
+        instanceLabel,
+        namespace,
+        schema
       });
       return;
     }
     for (const [label, child] of objectEntries(node)) {
+      if (isInternalTreeMetadataKey(label)) continue;
       walk(child, `${path}.${label}`);
     }
   }
@@ -2226,13 +2984,27 @@ function collectLeafRows(value: unknown, basePath: string): ConfigLeafRow[] {
   return rows;
 }
 
-function collectListTable(value: unknown[], basePath: string): ConfigListTable {
+function isInternalTreeMetadataPath(path: string, basePath: string): boolean {
+  const relativePath = path === basePath ? "." : path.slice(basePath.length + 1);
+  return relativePath.split(".").some(isInternalTreeMetadataKey);
+}
+
+function isInternalTreeMetadataKey(key: string): boolean {
+  return key === "_namespace" || key === "_attributes" || key === "_text";
+}
+
+function collectListTable(
+  value: unknown[],
+  basePath: string,
+  root: unknown,
+  schemaIndex: YangSchemaIndex
+): ConfigListTable {
   const columns: ConfigListTableColumn[] = [];
   const seenColumns = new Set<string>();
   const rows = value.map((item, index): ConfigListTableRow => {
     const itemPath = `${basePath}.${index}`;
     const cells: Record<string, ConfigListTableCell> = {};
-    const leafRows = collectLeafRows(item, itemPath);
+    const leafRows = collectLeafRows(item, itemPath, root, schemaIndex);
 
     for (const leaf of leafRows) {
       const key = leaf.relativePath === "." ? "." : leaf.relativePath;
@@ -2245,7 +3017,8 @@ function collectListTable(value: unknown[], basePath: string): ConfigListTable {
         path: leaf.path,
         label,
         value: leaf.value,
-        valueType: leaf.valueType
+        valueType: leaf.valueType,
+        schema: leaf.schema
       };
     }
 
@@ -3028,34 +3801,12 @@ function AdminTab() {
         </div>
         {error ? <ErrorPanel message={error} onRetry={() => void loadAdminData()} /> : null}
         <CreateUserForm onSuccess={() => void loadAdminData()} />
-        <div className="space-y-2">
-          {users.map((u) => (
-            <div key={u.id} className="rounded border border-warm bg-canvas/95 p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold">{u.display_name}</p>
-                  <p className="text-xs text-muted">
-                    {u.username} · {u.roles.map((r) => r.name).join(", ") || t("admin.noRoles")}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={u.is_active ? "online" : "offline"} />
-                  <Button
-                    onClick={() => void toggleUser(u)}
-                    className="h-8 px-2 text-xs"
-                  >
-                    {u.is_active ? t("admin.disable") : t("admin.enable")}
-                  </Button>
-                </div>
-              </div>
-              <UserRoleControls
-                user={u}
-                roles={roles}
-                onChange={() => void loadAdminData()}
-              />
-            </div>
-          ))}
-        </div>
+        <UserListTable
+          users={users}
+          roles={roles}
+          onToggle={(u) => void toggleUser(u)}
+          onChange={() => void loadAdminData()}
+        />
       </div>
       <aside className="space-y-4">
         <RolePermissionEditor
@@ -3158,6 +3909,108 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
+function UserListTable({
+  users,
+  roles,
+  onToggle,
+  onChange
+}: {
+  users: UserRead[];
+  roles: Role[];
+  onToggle: (user: UserRead) => void;
+  onChange: () => void;
+}) {
+  const t = useT();
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  if (users.length === 0) {
+    return (
+      <div className="rounded border border-warm bg-canvas/95 p-4 text-xs text-muted">
+        {t("admin.noUsers")}
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded border border-warm">
+      <table className="w-full min-w-[640px] border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-warm bg-paper/70 text-left font-mono text-[11px] uppercase text-muted">
+            <th className="px-3 py-2 font-medium">{t("admin.user")}</th>
+            <th className="px-3 py-2 font-medium">{t("admin.roles")}</th>
+            <th className="px-3 py-2 font-medium">{t("table.status")}</th>
+            <th className="px-3 py-2 text-right font-medium">{t("table.actions")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {users.map((u) => {
+            const isExpanded = expandedId === u.id;
+            return (
+              <Fragment key={u.id}>
+                <tr className="border-b border-warm/70 last:border-0 hover:bg-paper">
+                  <td className="px-3 py-3">
+                    <p className="font-semibold">{u.display_name}</p>
+                    <p className="mt-1 font-mono text-[11px] text-muted">{u.username}</p>
+                  </td>
+                  <td className="px-3 py-3 text-xs text-muted">
+                    {u.roles.length === 0 ? (
+                      <span className="text-muted">{t("admin.noRoles")}</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {u.roles.map((role) => (
+                          <span
+                            key={role.id}
+                            className="rounded border border-warm bg-paper px-2 py-0.5 font-mono text-[11px] text-muted"
+                          >
+                            {role.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-3 py-3">
+                    <StatusBadge status={u.is_active ? "online" : "offline"} />
+                  </td>
+                  <td className="px-3 py-3 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        onClick={() => setExpandedId(isExpanded ? null : u.id)}
+                        className="h-8 px-2 text-xs"
+                        aria-expanded={isExpanded}
+                        title={t("admin.manageRoles")}
+                      >
+                        {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                        <span className="ml-1 hidden sm:inline">{t("admin.manageRoles")}</span>
+                      </Button>
+                      <Button
+                        onClick={() => onToggle(u)}
+                        className="h-8 px-2 text-xs"
+                      >
+                        {u.is_active ? t("admin.disable") : t("admin.enable")}
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+                {isExpanded ? (
+                  <tr className="border-b border-warm/70 bg-paper/40 last:border-0">
+                    <td colSpan={4} className="px-3 py-3">
+                      <UserRoleControls
+                        user={u}
+                        roles={roles}
+                        onChange={onChange}
+                      />
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function UserRoleControls({
   user,
   roles,
@@ -3196,17 +4049,21 @@ function UserRoleControls({
   }
 
   return (
-    <div className="mt-3 border-t border-warm pt-3">
+    <div>
       <div className="flex flex-wrap gap-2">
-        {user.roles.map((role) => (
-          <button
-            key={role.id}
-            onClick={() => void removeRole(role)}
-            className="rounded border border-warm bg-paper px-2 py-1 font-mono text-[11px] text-muted hover:border-error hover:text-error"
-          >
-            {role.name} x
-          </button>
-        ))}
+        {user.roles.length === 0 ? (
+          <span className="text-xs text-muted">{t("admin.noRoles")}</span>
+        ) : (
+          user.roles.map((role) => (
+            <button
+              key={role.id}
+              onClick={() => void removeRole(role)}
+              className="rounded border border-warm bg-paper px-2 py-1 font-mono text-[11px] text-muted hover:border-error hover:text-error"
+            >
+              {role.name} x
+            </button>
+          ))
+        )}
       </div>
       <div className="mt-3 flex gap-2">
         <select

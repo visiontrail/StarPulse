@@ -29,6 +29,15 @@ class NetconfClient(Protocol):
     def get_config(self, params: NetconfConnectionParams, datastore: str) -> str:
         raise NotImplementedError
 
+    def get_schema(
+        self,
+        params: NetconfConnectionParams,
+        identifier: str,
+        version: str | None = None,
+        format: str | None = None,
+    ) -> str:
+        raise NotImplementedError
+
     def edit_config(
         self, params: NetconfConnectionParams, datastore: str, config_body: str
     ) -> None:

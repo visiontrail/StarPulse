@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+from xml.etree import ElementTree
 
 from app.devices.constants import DeviceAccessErrorCode
 from app.netconf.client import NetconfConnectionParams
@@ -55,6 +56,27 @@ class NcclientNetconfClient:
         except Exception as exc:
             raise _map_exception(exc, params) from exc
 
+    def get_schema(
+        self,
+        params: NetconfConnectionParams,
+        identifier: str,
+        version: str | None = None,
+        format: str | None = None,
+    ) -> str:
+        try:
+            with self._connect(params) as session:
+                kwargs = {"identifier": identifier}
+                if version:
+                    kwargs["version"] = version
+                if format:
+                    kwargs["format"] = format
+                result = session.get_schema(**kwargs)
+                return _schema_text(result)
+        except NetconfError:
+            raise
+        except Exception as exc:
+            raise _map_exception(exc, params) from exc
+
     def edit_config(
         self, params: NetconfConnectionParams, datastore: str, config_body: str
     ) -> None:
@@ -101,6 +123,37 @@ def _xml_value_to_string(value: object) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8")
     return str(value)
+
+
+def _schema_text(reply: object) -> str:
+    for attr in ("data", "data_xml", "xml"):
+        try:
+            value = getattr(reply, attr, None)
+        except Exception:
+            value = None
+        if not value:
+            continue
+        text = _xml_value_to_string(value)
+        extracted = _extract_schema_data_text(text)
+        if extracted:
+            return extracted
+        if "module " in text or "submodule " in text:
+            return text
+    return str(reply)
+
+
+def _extract_schema_data_text(text: str) -> str | None:
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError:
+        return None
+    local_name = root.tag.rsplit("}", 1)[-1]
+    if local_name == "data":
+        return (root.text or "").strip() or None
+    for child in root.iter():
+        if child.tag.rsplit("}", 1)[-1] == "data" and child.text:
+            return child.text.strip()
+    return None
 
 
 def _map_exception(exc: Exception, params: NetconfConnectionParams) -> Exception:

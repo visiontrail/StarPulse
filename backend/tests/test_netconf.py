@@ -6,6 +6,7 @@ from app.netconf.client import NetconfConnectionParams
 from app.netconf.services import NetconfService
 from app.netconf.services.config_digest import config_digest, normalize_config_content
 from app.netconf.services.errors import NetconfAuthenticationError
+from app.netconf.services.service import parse_yang_nodes
 
 
 class FakeNetconfClient:
@@ -19,7 +20,33 @@ class FakeNetconfClient:
         return {"hostname": params.host}
 
     def get_config(self, params: NetconfConnectionParams, datastore: str) -> str:
-        return f"<config><host>{params.host}</host><datastore>{datastore}</datastore></config>"
+        return (
+            f'<config xmlns="config"><host>{params.host}</host>'
+            f"<datastore>{datastore}</datastore></config>"
+        )
+
+    def get_schema(
+        self,
+        params: NetconfConnectionParams,
+        identifier: str,
+        version: str | None = None,
+        format: str | None = None,
+    ) -> str:
+        return """
+        module config {
+          namespace "config";
+          prefix cfg;
+          container config {
+            leaf host { type string; }
+            leaf datastore {
+              type enumeration {
+                enum running;
+                enum startup;
+              }
+            }
+          }
+        }
+        """
 
 
 def test_netconf_service_uses_client_abstraction() -> None:
@@ -69,6 +96,109 @@ def test_netconf_service_reads_config_and_returns_stable_summary() -> None:
     assert result.content_digest == config_digest(result.config_content)
     assert result.summary["content_digest"] == result.content_digest
     assert "config_content" not in result.summary
+
+
+def test_netconf_service_enriches_config_reads_with_yang_nodes() -> None:
+    params = NetconfConnectionParams(host="192.0.2.23", username="netconf")
+    result = NetconfService(client=FakeNetconfClient()).read_config(params, "running")
+
+    assert result.ok is True
+    models = result.summary["yang_models"]
+    assert isinstance(models, list)
+    nodes = models[0]["nodes"]
+    assert isinstance(nodes, list)
+    datastore = next(node for node in nodes if node["name"] == "datastore")
+    assert datastore["type"] == "enumeration"
+    assert datastore["enum_values"] == [{"name": "running"}, {"name": "startup"}]
+
+
+def test_netconf_service_loads_imported_yang_models_for_grouping_nodes() -> None:
+    class ImportingClient(FakeNetconfClient):
+        def get_schema(
+            self,
+            params: NetconfConnectionParams,
+            identifier: str,
+            version: str | None = None,
+            format: str | None = None,
+        ) -> str:
+            if identifier == "config":
+                return """
+                module config {
+                  namespace "config";
+                  prefix cfg;
+                  import tcp-helper { prefix tcph; revision-date 2026-01-01; }
+                  container config {
+                    container tcp-server-parameters {
+                      uses tcph:tcp-server-grouping;
+                    }
+                  }
+                }
+                """
+            if identifier == "tcp-helper":
+                return """
+                module tcp-helper {
+                  namespace "tcp-helper";
+                  prefix tcph;
+                  revision 2026-01-01;
+                  grouping tcp-server-grouping {
+                    container local-bind {
+                      leaf local-address { type ip-address; }
+                    }
+                  }
+                }
+                """
+            raise AssertionError(f"unexpected schema request: {identifier}")
+
+    params = NetconfConnectionParams(host="192.0.2.23", username="netconf")
+    result = NetconfService(client=ImportingClient()).read_config(params, "running")
+
+    assert result.ok is True
+    models = result.summary["yang_models"]
+    assert [model["module"] for model in models] == ["config", "tcp-helper"]
+    imported_nodes = models[1]["nodes"]
+    assert any(node["name"] == "local-address" for node in imported_nodes)
+
+
+def test_parse_yang_nodes_extracts_leaf_types_and_constraints() -> None:
+    parsed = parse_yang_nodes(
+        """
+        module mock-router {
+          namespace "urn:mock:router";
+          prefix mr;
+          container device-info {
+            leaf vendor {
+              type enumeration {
+                enum MockVendor { value 1; }
+                enum OtherVendor;
+              }
+              default MockVendor;
+              mandatory true;
+            }
+            leaf enabled {
+              type boolean;
+            }
+            leaf metric {
+              type uint16 {
+                range "1..65535";
+              }
+            }
+          }
+        }
+        """
+    )
+
+    assert parsed is not None
+    nodes = parsed["nodes"]
+    assert isinstance(nodes, list)
+    vendor = next(node for node in nodes if node["name"] == "vendor")
+    assert vendor["namespace"] == "urn:mock:router"
+    assert vendor["type"] == "enumeration"
+    assert vendor["mandatory"] is True
+    assert vendor["default"] == "MockVendor"
+    assert vendor["enum_values"][0] == {"name": "MockVendor", "value": "1"}
+    metric = next(node for node in nodes if node["name"] == "metric")
+    assert metric["type"] == "uint16"
+    assert metric["range"] == "1..65535"
 
 
 def test_netconf_service_rejects_unsupported_datastore_without_client_call() -> None:
