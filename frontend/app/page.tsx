@@ -1483,6 +1483,46 @@ function ConfigModelWorkspace({
 }) {
   const t = useT();
   const [treeOpenPaths, setTreeOpenPaths] = useState<Set<string>>(() => new Set(["root", "root.data"]));
+  const [treeWidth, setTreeWidth] = useState(300);
+  const userResizedRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  // Auto-adapt tree width based on the deepest expanded node
+  useEffect(() => {
+    if (userResizedRef.current) return;
+    let maxDepth = 0;
+    for (const path of treeOpenPaths) {
+      const depth = path.split(".").length - 1;
+      if (depth > maxDepth) maxDepth = depth;
+    }
+    // left-pad + chevron + gap + label(min) + type-badge + count + right-pad
+    const needed = (8 + maxDepth * 16) + 16 + 6 + 120 + 54 + 44 + 16;
+    setTreeWidth(Math.max(280, Math.min(needed, 640)));
+  }, [treeOpenPaths]);
+
+  function handleDragStart(e: React.MouseEvent) {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startWidth: treeWidth };
+    userResizedRef.current = true;
+
+    function onMouseMove(ev: MouseEvent) {
+      if (!dragRef.current) return;
+      const delta = ev.clientX - dragRef.current.startX;
+      const containerWidth = containerRef.current?.clientWidth ?? 1200;
+      const newWidth = Math.max(200, Math.min(dragRef.current.startWidth + delta, containerWidth * 0.65));
+      setTreeWidth(newWidth);
+    }
+
+    function onMouseUp() {
+      dragRef.current = null;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
 
   function treeExpandAll() {
     const paths = new Set<string>();
@@ -1533,41 +1573,53 @@ function ConfigModelWorkspace({
   }, [effectivePath, schemaIndex]);
 
   return (
-    <div className="grid min-h-[520px] gap-3 xl:grid-cols-[minmax(260px,0.34fr)_minmax(0,1fr)]">
-      <InfoPanel
-        icon={<Settings2 />}
-        title={t("workspace.configTree")}
-        headerActions={
-          <div className="flex gap-0.5">
-            <button
-              type="button"
-              onClick={treeExpandAll}
-              title={t("common.expandAll")}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base font-semibold text-muted transition hover:bg-paper hover:text-ink"
-            >
-              +
-            </button>
-            <button
-              type="button"
-              onClick={treeCollapseAll}
-              title={t("common.collapseAll")}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base font-semibold text-muted transition hover:bg-paper hover:text-ink"
-            >
-              −
-            </button>
-          </div>
-        }
-      >
-        <ParentObjectTree
-          data={data}
-          selectedPath={effectivePath}
-          openPaths={treeOpenPaths}
-          onToggle={treeToggle}
-          onSelectPath={onSelectPath}
-        />
-      </InfoPanel>
+    <div ref={containerRef} className="flex min-h-[520px]">
+      <div style={{ width: treeWidth, minWidth: 200, flexShrink: 0 }}>
+        <InfoPanel
+          icon={<Settings2 />}
+          title={t("workspace.configTree")}
+          className="h-full"
+          headerActions={
+            <div className="flex gap-0.5">
+              <button
+                type="button"
+                onClick={treeExpandAll}
+                title={t("common.expandAll")}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base font-semibold text-muted transition hover:bg-paper hover:text-ink"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                onClick={treeCollapseAll}
+                title={t("common.collapseAll")}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base font-semibold text-muted transition hover:bg-paper hover:text-ink"
+              >
+                −
+              </button>
+            </div>
+          }
+        >
+          <ParentObjectTree
+            data={data}
+            selectedPath={effectivePath}
+            openPaths={treeOpenPaths}
+            onToggle={treeToggle}
+            onSelectPath={onSelectPath}
+          />
+        </InfoPanel>
+      </div>
 
-      <section className="flex min-h-0 flex-col rounded border border-warm bg-surface/70 p-4">
+      {/* Drag handle */}
+      <div
+        className="group mx-1.5 flex shrink-0 cursor-col-resize items-stretch justify-center"
+        onMouseDown={handleDragStart}
+        title="拖拽调整宽度"
+      >
+        <div className="w-px self-stretch bg-warm transition-colors group-hover:w-0.5 group-hover:bg-accent/60" />
+      </div>
+
+      <section className="flex min-h-0 flex-1 flex-col rounded border border-warm bg-surface/70 p-4">
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="text-accent"><FilePenLine className="h-4 w-4" aria-hidden /></span>
           <h3 className="shrink-0 text-sm font-semibold">叶子节点</h3>
@@ -1848,7 +1900,7 @@ function ParentObjectTree({
   onSelectPath: (path: string) => void;
 }) {
   return (
-    <div className="max-h-[64dvh] overflow-auto rounded border border-warm bg-paper/70 p-2">
+    <div className="max-h-[64dvh] overflow-x-hidden overflow-y-auto rounded border border-warm bg-paper/70 p-2">
       <ParentTreeRows
         label="root"
         value={data}
@@ -1893,7 +1945,7 @@ function ParentTreeRows({
     <div>
       <div
         className={cn(
-          "grid min-h-9 grid-cols-[minmax(140px,1fr)_auto] items-center gap-2 rounded px-2 text-sm transition",
+          "flex min-h-9 items-center gap-2 rounded pr-2 text-sm transition",
           selectedPath === path ? "bg-canvas" : "hover:bg-canvas/70"
         )}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
@@ -1904,7 +1956,7 @@ function ParentTreeRows({
             onSelectPath(path);
             if (childParents.length > 0) onToggle(path);
           }}
-          className="flex min-w-0 items-center gap-1.5 text-left"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
           {childParents.length > 0 ? (
             open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />
@@ -1916,7 +1968,7 @@ function ParentTreeRows({
             {treeType(value)}
           </span>
         </button>
-        <span className="font-mono text-[10px] text-muted">
+        <span className="shrink-0 font-mono text-[10px] text-muted">
           {t("tree.itemsCount", { count: leafCount })}
         </span>
       </div>
