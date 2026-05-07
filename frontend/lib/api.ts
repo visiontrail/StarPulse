@@ -31,26 +31,51 @@ export class ApiError extends Error {
   }
 }
 
-const ROLLBACK_BLOCKER_MESSAGES: Record<string, string> = {
-  CHANGE_IN_FLIGHT: "Another change is already in progress for this device/datastore. Wait for it to complete.",
-  ROLLBACK_TARGET_NOT_RESTORABLE: "This snapshot cannot be used as a rollback target (normalized content not available).",
-  ROLLBACK_NO_DIVERGENCE: "The device is already at the state of the target snapshot — no rollback needed.",
-  ROLLBACK_ORIGIN_NOT_RECOVERABLE: "The origin change is not in a recoverable state (must be verification_failed or failed).",
-};
+type Translator = (key: string, params?: Record<string, string | number>) => string;
 
-export function formatRollbackBlocker(blocker: string): string {
-  return ROLLBACK_BLOCKER_MESSAGES[blocker] ?? blocker;
+const identityTranslator: Translator = (key) => key;
+
+const ROLLBACK_BLOCKER_KEYS = [
+  "CHANGE_IN_FLIGHT",
+  "ROLLBACK_TARGET_NOT_RESTORABLE",
+  "ROLLBACK_NO_DIVERGENCE",
+  "ROLLBACK_ORIGIN_NOT_RECOVERABLE"
+] as const;
+
+export function formatRollbackBlocker(blocker: string, t: Translator = identityTranslator): string {
+  if ((ROLLBACK_BLOCKER_KEYS as readonly string[]).includes(blocker)) {
+    const key = `rollbackBlocker.${blocker}`;
+    const localized = t(key);
+    if (localized !== key) return localized;
+  }
+  return blocker;
 }
 
-export function formatApiError(error: unknown): string {
+const INTERNAL_ERROR_KEYS: Record<string, string> = {
+  "Session expired": "common.sessionExpired",
+  "Invalid credentials": "auth.invalid",
+  "Unable to load current user": "common.requestFailed"
+};
+
+export function formatApiError(error: unknown, t: Translator = identityTranslator): string {
   if (error instanceof ApiError) {
     if (error.blockers.length > 0) {
-      return error.blockers.map((b) => ROLLBACK_BLOCKER_MESSAGES[b] ?? b).join("; ");
+      const sep = t("rollback.preflightBlockerSeparator");
+      const separator = sep === "rollback.preflightBlockerSeparator" ? "; " : sep;
+      return error.blockers.map((b) => formatRollbackBlocker(b, t)).join(separator);
     }
     return error.message;
   }
-  if (error instanceof Error) return error.message;
-  return "Request failed";
+  if (error instanceof Error) {
+    const key = INTERNAL_ERROR_KEYS[error.message];
+    if (key) {
+      const localized = t(key);
+      if (localized !== key) return localized;
+    }
+    return error.message;
+  }
+  const fallback = t("common.requestFailed");
+  return fallback === "common.requestFailed" ? "Request failed" : fallback;
 }
 
 // ── Session state (in-memory access token) ────────────────────────────────

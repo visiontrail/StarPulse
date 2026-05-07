@@ -38,8 +38,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandMark } from "@/components/brand";
 import { LoginView, SessionHeader } from "@/components/auth";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button, DatastoreSelect, EmptyState, FieldLabel, StatusBadge } from "@/components/ui";
 import { api, formatApiError, formatRollbackBlocker } from "@/lib/api";
+import { useT, type TranslateFn } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
 import type {
   AuditLogRead,
@@ -70,11 +72,12 @@ const REALTIME_SLOW_REFRESH_MS = 8000;
 
 export default function OperationsConsole() {
   const { state } = useSession();
+  const t = useT();
 
   if (state === "loading") {
     return (
       <div className="flex min-h-screen items-center justify-center text-muted">
-        Loading…
+        {t("app.loading")}
       </div>
     );
   }
@@ -88,19 +91,20 @@ export default function OperationsConsole() {
 
 function AuthenticatedConsole() {
   const { hasPermission } = useSession();
+  const t = useT();
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode; perm: string }[] = [
-    { id: "devices", label: "Devices", icon: <Router className="h-4 w-4" />, perm: PERM.DEVICE_READ },
+    { id: "devices", label: t("tab.devices"), icon: <Router className="h-4 w-4" />, perm: PERM.DEVICE_READ },
     {
       id: "changes",
-      label: "Changes",
+      label: t("tab.changes"),
       icon: <ClipboardList className="h-4 w-4" />,
       perm: PERM.DEVICE_CHANGE_SUBMIT
     },
-    { id: "admin", label: "Admin", icon: <Users className="h-4 w-4" />, perm: PERM.USER_MANAGE },
+    { id: "admin", label: t("tab.admin"), icon: <Users className="h-4 w-4" />, perm: PERM.USER_MANAGE },
     {
       id: "audit",
-      label: "Audit",
+      label: t("tab.audit"),
       icon: <FileClock className="h-4 w-4" />,
       perm: PERM.AUDIT_READ_SUMMARY
     }
@@ -116,7 +120,7 @@ function AuthenticatedConsole() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2.5">
             <BrandMark className="h-8 w-8" />
-            <p className="font-mono text-[11px] uppercase text-muted">Star Pulse</p>
+            <p className="font-mono text-[11px] uppercase text-muted">{t("app.brand")}</p>
           </div>
           <nav className="flex gap-1">
             {tabs.map(({ id, label, icon, perm }) =>
@@ -138,15 +142,18 @@ function AuthenticatedConsole() {
             )}
           </nav>
         </div>
-        <SessionHeader />
+        <div className="flex items-center gap-3">
+          <LanguageSwitcher />
+          <SessionHeader />
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 p-2 md:p-3">
         {availableTabs.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-20 text-center">
             <KeyRound className="h-8 w-8 text-muted" />
-            <p className="text-sm text-muted">您的账号尚未分配任何权限。</p>
-            <p className="text-xs text-muted">请联系管理员分配角色后重新登录。</p>
+            <p className="text-sm text-muted">{t("auth.noPermissionTitle")}</p>
+            <p className="text-xs text-muted">{t("auth.noPermissionHint")}</p>
           </div>
         ) : (
           <>
@@ -165,6 +172,7 @@ function AuthenticatedConsole() {
 
 function DevicesTab() {
   const { hasPermission } = useSession();
+  const t = useT();
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const selectedDeviceIdRef = useRef<number | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -236,10 +244,10 @@ function DevicesTab() {
     } catch (e) {
       if (!options.silent) {
         setDevicesState("error");
-        setError(errorMessage(e));
+        setError(errorMessage(e, t));
       }
     }
-  }, []);
+  }, [t]);
 
   const loadProfile = useCallback(async (deviceId: number, options: RefreshOptions = {}) => {
     if (!options.silent) {
@@ -261,10 +269,10 @@ function DevicesTab() {
     } catch (e) {
       if (!options.silent) {
         setProfileState("error");
-        setError(errorMessage(e));
+        setError(errorMessage(e, t));
       }
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadDevices();
@@ -394,7 +402,7 @@ function DevicesTab() {
       setSubmitState("loaded");
     } catch (e) {
       setSubmitState("error");
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
@@ -410,7 +418,7 @@ function DevicesTab() {
       setSubmitState("loaded");
     } catch (e) {
       setSubmitState("error");
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
@@ -440,7 +448,7 @@ function DevicesTab() {
       setChangeSubmitState("loaded");
     } catch (e) {
       setChangeSubmitState("error");
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
@@ -469,7 +477,7 @@ function DevicesTab() {
       setChangeSubmitState("loaded");
     } catch (e) {
       setChangeSubmitState("error");
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
@@ -520,7 +528,7 @@ function DevicesTab() {
       />
 
       <ResizeHandle
-        label="Resize device list"
+        label={t("devices.resizeList")}
         hidden={listMode === "collapsed" || listMode === "expanded"}
         onPointerDown={(event) => startResize("left", event)}
       />
@@ -535,7 +543,7 @@ function DevicesTab() {
 
         {selectedDevice === null && devicesState !== "loading" ? (
           <div className="flex min-h-0 flex-1 items-center justify-center p-4">
-            <EmptyState icon={<HardDrive className="h-6 w-6" />} title="Select a device" />
+            <EmptyState icon={<HardDrive className="h-6 w-6" />} title={t("devices.selectPrompt")} />
           </div>
         ) : null}
 
@@ -591,7 +599,7 @@ function DevicesTab() {
       </section>
 
       <ResizeHandle
-        label="Resize status history"
+        label={t("devices.resizeStatus")}
         hidden={statusCollapsed}
         onPointerDown={(event) => startResize("right", event)}
       />
@@ -649,11 +657,12 @@ function CollapsedWorkspacePane({
   device: Device | null;
   onExpand: () => void;
 }) {
+  const t = useT();
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center gap-3 py-3">
       <Button
-        aria-label="Expand workspace"
-        title="Expand workspace"
+        aria-label={t("devices.expandWorkspace")}
+        title={t("devices.expandWorkspace")}
         onClick={onExpand}
         className="h-9 w-9 px-0 bg-paper"
       >
@@ -662,7 +671,7 @@ function CollapsedWorkspacePane({
       <div className="h-px w-8 bg-warm" />
       <div className="flex min-h-0 flex-1 items-center justify-center px-2">
         <p className="max-h-full [writing-mode:vertical-rl] truncate text-xs font-semibold text-muted">
-          {device?.name ?? "Workspace"}
+          {device?.name ?? t("devices.workspace")}
         </p>
       </div>
     </div>
@@ -694,12 +703,13 @@ function DeviceStatusPane({
   onStartChange: (snapshot: ConfigSnapshot) => void;
   onRollbackSuccess: () => void;
 }) {
+  const t = useT();
   if (collapsed) {
     return (
       <aside className="flex min-h-0 flex-col items-center gap-3 rounded border border-warm bg-canvas/95 py-3">
         <Button
-          aria-label="Expand status history"
-          title="Expand status history"
+          aria-label={t("devices.expandStatus")}
+          title={t("devices.expandStatus")}
           onClick={onToggleCollapsed}
           className="h-9 w-9 px-0 bg-paper"
         >
@@ -708,7 +718,7 @@ function DeviceStatusPane({
         <div className="h-px w-8 bg-warm" />
         <div className="flex min-h-0 flex-1 items-center justify-center px-2">
           <p className="[writing-mode:vertical-rl] text-xs font-semibold text-muted">
-            Status History
+            {t("devices.statusHistory")}
           </p>
         </div>
         <StatusBadge status={profile?.status ?? "idle"} />
@@ -720,12 +730,12 @@ function DeviceStatusPane({
     <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-warm bg-canvas/95">
       <div className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-warm px-4">
         <div className="min-w-0">
-          <h2 className="truncate text-lg font-semibold">Status History</h2>
-          <p className="font-mono text-[11px] text-muted">Boundary · Snapshots · Tasks</p>
+          <h2 className="truncate text-lg font-semibold">{t("devices.statusHistory")}</h2>
+          <p className="font-mono text-[11px] text-muted">{t("devices.statusSubtitle")}</p>
         </div>
         <Button
-          aria-label="Collapse status history"
-          title="Collapse status history"
+          aria-label={t("devices.collapseStatus")}
+          title={t("devices.collapseStatus")}
           onClick={onToggleCollapsed}
           className="h-9 w-9 px-0 bg-paper"
         >
@@ -788,21 +798,22 @@ function DeviceInventoryPane({
   onCreateSuccess: (deviceId: number) => Promise<void>;
   onDelete: (deviceId: number) => Promise<void>;
 }) {
+  const t = useT();
   if (mode === "collapsed") {
     const selected = devices.find((device) => device.id === selectedDeviceId);
     return (
       <aside className="flex min-h-0 flex-col items-center gap-2 rounded border border-warm bg-canvas/95 py-3">
         <Button
-          aria-label="Expand device list"
-          title="Expand device list"
+          aria-label={t("devices.expandList")}
+          title={t("devices.expandList")}
           onClick={() => onModeChange("compact")}
           className="h-9 w-9 px-0"
         >
           <PanelLeftOpen className="h-4 w-4" aria-hidden />
         </Button>
         <Button
-          aria-label="Open full device list"
-          title="Open full device list"
+          aria-label={t("devices.openFullList")}
+          title={t("devices.openFullList")}
           onClick={() => onModeChange("expanded")}
           className="h-9 w-9 px-0 bg-paper"
         >
@@ -810,8 +821,8 @@ function DeviceInventoryPane({
         </Button>
         <div className="my-1 h-px w-8 bg-warm" />
         <Button
-          aria-label="Refresh devices"
-          title="Refresh devices"
+          aria-label={t("devices.refresh")}
+          title={t("devices.refresh")}
           onClick={onRefresh}
           busy={loading}
           className="h-9 w-9 px-0"
@@ -830,21 +841,23 @@ function DeviceInventoryPane({
     <aside className="flex min-h-0 flex-col rounded border border-warm bg-canvas/95">
       <div className="flex h-16 shrink-0 items-center justify-between border-b border-warm px-4">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold">Device Inventory</h2>
-          <p className="font-mono text-[11px] text-muted">{devices.length}/{allDeviceCount} visible</p>
+          <h2 className="text-lg font-semibold">{t("devices.inventory")}</h2>
+          <p className="font-mono text-[11px] text-muted">
+            {t("devices.visibleCount", { visible: devices.length, total: allDeviceCount })}
+          </p>
         </div>
         <div className="flex items-center gap-1.5">
           <Button
-            aria-label="Collapse device list"
-            title="Collapse device list"
+            aria-label={t("devices.collapseList")}
+            title={t("devices.collapseList")}
             onClick={() => onModeChange("collapsed")}
             className="h-9 w-9 px-0 bg-paper"
           >
             <PanelLeftClose className="h-4 w-4" aria-hidden />
           </Button>
           <Button
-            aria-label={mode === "expanded" ? "Compact device list" : "Expand device list"}
-            title={mode === "expanded" ? "Compact device list" : "Expand device list"}
+            aria-label={mode === "expanded" ? t("devices.compactList") : t("devices.expandList")}
+            title={mode === "expanded" ? t("devices.compactList") : t("devices.expandList")}
             onClick={() => onModeChange(mode === "expanded" ? "compact" : "expanded")}
             className="h-9 w-9 px-0"
           >
@@ -856,8 +869,8 @@ function DeviceInventoryPane({
           </Button>
           {canManage ? (
             <Button
-              aria-label="Add device"
-              title="Add device"
+              aria-label={t("devices.add")}
+              title={t("devices.add")}
               onClick={onToggleCreate}
               className="h-9 w-9 px-0"
             >
@@ -865,8 +878,8 @@ function DeviceInventoryPane({
             </Button>
           ) : null}
           <Button
-            aria-label="Refresh devices"
-            title="Refresh devices"
+            aria-label={t("devices.refresh")}
+            title={t("devices.refresh")}
             onClick={onRefresh}
             busy={loading}
             className="h-9 w-9 px-0"
@@ -882,7 +895,7 @@ function DeviceInventoryPane({
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="Search name, host, group, status"
+            placeholder={t("devices.searchPlaceholder")}
             className="h-9 w-full rounded border border-warm bg-paper pl-8 pr-2 text-sm outline-none transition focus:border-warm-strong"
           />
         </label>
@@ -893,10 +906,10 @@ function DeviceInventoryPane({
         {loading ? <DeviceListSkeleton /> : null}
         {error ? <ErrorPanel message={error} onRetry={onRefresh} /> : null}
         {!loading && !error && allDeviceCount === 0 ? (
-          <EmptyState icon={<Router className="h-6 w-6" />} title="No devices registered" />
+          <EmptyState icon={<Router className="h-6 w-6" />} title={t("devices.empty")} />
         ) : null}
         {!loading && !error && allDeviceCount > 0 && devices.length === 0 ? (
-          <EmptyState icon={<Search className="h-6 w-6" />} title="No matching devices" />
+          <EmptyState icon={<Search className="h-6 w-6" />} title={t("devices.noMatches")} />
         ) : null}
         {devices.length > 0 && mode === "compact" ? (
           <div className="space-y-2">
@@ -940,6 +953,7 @@ function DeviceInventoryTable({
   onSelect: (deviceId: number) => void;
   onDelete: (deviceId: number) => Promise<void>;
 }) {
+  const t = useT();
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
@@ -958,15 +972,15 @@ function DeviceInventoryTable({
       <table className="w-full min-w-[1180px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-warm bg-paper/70 text-left font-mono text-[11px] uppercase text-muted">
-            <th className="px-3 py-2 font-medium">Device</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Endpoint</th>
-            <th className="px-3 py-2 font-medium">Access</th>
-            <th className="px-3 py-2 font-medium">Discovery</th>
-            <th className="px-3 py-2 font-medium">Onboarding</th>
-            <th className="px-3 py-2 font-medium">Baseline</th>
-            <th className="px-3 py-2 font-medium">Updated</th>
-            {canManage ? <th className="px-3 py-2 font-medium">Actions</th> : null}
+            <th className="px-3 py-2 font-medium">{t("table.device")}</th>
+            <th className="px-3 py-2 font-medium">{t("table.status")}</th>
+            <th className="px-3 py-2 font-medium">{t("table.endpoint")}</th>
+            <th className="px-3 py-2 font-medium">{t("table.access")}</th>
+            <th className="px-3 py-2 font-medium">{t("table.discovery")}</th>
+            <th className="px-3 py-2 font-medium">{t("table.onboarding")}</th>
+            <th className="px-3 py-2 font-medium">{t("table.baseline")}</th>
+            <th className="px-3 py-2 font-medium">{t("table.updated")}</th>
+            {canManage ? <th className="px-3 py-2 font-medium">{t("table.actions")}</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -985,9 +999,9 @@ function DeviceInventoryTable({
               >
                 <td className="px-3 py-3">
                   <p className="max-w-[220px] truncate font-semibold">{device.name}</p>
-                  <p className="mt-1 font-mono text-[11px] text-muted">#{device.id} · {device.group ?? "ungrouped"}</p>
+                  <p className="mt-1 font-mono text-[11px] text-muted">#{device.id} · {device.group ?? t("device.ungrouped")}</p>
                   <p className="mt-1 truncate font-mono text-[11px] text-muted">
-                    SN {device.serial_number ?? "-"}
+                    {t("device.serialPrefix", { value: device.serial_number ?? "-" })}
                   </p>
                 </td>
                 <td className="px-3 py-3"><StatusBadge status={device.status} /></td>
@@ -998,20 +1012,20 @@ function DeviceInventoryTable({
                 </td>
                 <td className="px-3 py-3 text-xs text-muted">
                   <p className="font-mono">{connection?.username ?? "-"}</p>
-                  <p className="mt-1">{connection?.has_credential ? "credential referenced" : "credential missing"}</p>
+                  <p className="mt-1">{connection?.has_credential ? t("device.credentialReferenced") : t("device.credentialMissing")}</p>
                 </td>
                 <td className="px-3 py-3 text-xs text-muted">
-                  <p>{discovery ? `${discovery.capabilities.length} caps` : "-"}</p>
-                  <p className="mt-1">{discovery ? `${Object.keys(discovery.system_info).length} system keys` : "-"}</p>
+                  <p>{discovery ? t("device.capCount", { count: discovery.capabilities.length }) : "-"}</p>
+                  <p className="mt-1">{discovery ? t("device.systemKeyCount", { count: Object.keys(discovery.system_info).length }) : "-"}</p>
                   <p className="mt-1">{discovery ? formatDate(discovery.discovered_at) : "-"}</p>
                 </td>
                 <td className="px-3 py-3 text-xs text-muted">
                   <div className="mb-2">
                     <StatusBadge status={onboarding ? (onboarding.ready_for_change ? "ready" : "blocked") : "not_started"} />
                   </div>
-                  <p>{onboardingSteps(onboarding)}</p>
-                  <p className="mt-1 truncate" title={onboardingDetail(onboarding)}>
-                    {onboardingDetail(onboarding)}
+                  <p>{onboardingSteps(t, onboarding)}</p>
+                  <p className="mt-1 truncate" title={onboardingDetail(t, onboarding)}>
+                    {onboardingDetail(t, onboarding)}
                   </p>
                 </td>
                 <td className="px-3 py-3 text-xs text-muted">
@@ -1023,7 +1037,7 @@ function DeviceInventoryTable({
                   <td className="px-3 py-3 text-xs" onClick={(e) => e.stopPropagation()}>
                     {confirmingId === device.id ? (
                       <div className="flex items-center gap-1">
-                        <span className="mr-1 text-[11px] font-medium text-red-500">确认删除?</span>
+                        <span className="mr-1 text-[11px] font-medium text-red-500">{t("common.confirmDelete")}</span>
                         <Button
                           busy={deletingId === device.id}
                           onClick={() => void handleDelete(device.id)}
@@ -1040,8 +1054,8 @@ function DeviceInventoryTable({
                       </div>
                     ) : (
                       <Button
-                        aria-label="Delete device"
-                        title="删除设备"
+                        aria-label={t("devices.delete")}
+                        title={t("devices.delete")}
                         onClick={() => setConfirmingId(device.id)}
                         className="h-7 w-7 px-0 text-muted hover:border-red-400 hover:text-red-500"
                       >
@@ -1128,6 +1142,7 @@ function DeviceWorkspace({
   onPreviewChange: () => void;
   onSubmitChange: () => void;
 }) {
+  const t = useT();
   const operationalTree = useMemo(
     () => buildOperationalTree(device, snapshots, datastore),
     [datastore, device, snapshots]
@@ -1138,7 +1153,7 @@ function DeviceWorkspace({
   );
   const modeDisabledReason = readyForChange
     ? null
-    : profile?.onboarding_summary?.blockers.join(", ") || "device onboarding is incomplete";
+    : profile?.onboarding_summary?.blockers.join(", ") || t("onboarding.incomplete");
 
   function editTreeLeaf(path: string, value: string) {
     onLeafDraftChange(path, value);
@@ -1151,14 +1166,14 @@ function DeviceWorkspace({
           <div className="min-w-0">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <StatusBadge status={profile?.status ?? device.status} />
-              <span className="font-mono text-[11px] text-muted">{device.group ?? "ungrouped"}</span>
+              <span className="font-mono text-[11px] text-muted">{device.group ?? t("device.ungrouped")}</span>
               <span className="font-mono text-[11px] text-muted">#{device.id}</span>
             </div>
             <h2 className="truncate text-2xl font-semibold">{device.name}</h2>
             <p className="mt-1 truncate font-mono text-xs text-muted">
               {device.connection
                 ? `${device.connection.protocol}://${device.connection.host}:${device.connection.port}`
-                : "connection unavailable"}
+                : t("workspace.connectionUnavailable")}
             </p>
           </div>
 
@@ -1166,7 +1181,7 @@ function DeviceWorkspace({
             <div
               className="w-full shrink-0 rounded border border-warm bg-paper p-1 shadow-panel sm:w-[268px]"
               role="group"
-              aria-label="Device view mode"
+              aria-label={t("workspace.viewModeLabel")}
             >
               <div className="grid grid-cols-2 gap-1">
                 <button
@@ -1177,7 +1192,7 @@ function DeviceWorkspace({
                   )}
                 >
                   <Gauge className="h-3.5 w-3.5" aria-hidden />
-                  <span className="truncate">Read Config</span>
+                  <span className="truncate">{t("workspace.readConfig")}</span>
                 </button>
                 <button
                   onClick={() => onDetailModeChange("config")}
@@ -1187,7 +1202,7 @@ function DeviceWorkspace({
                   )}
                 >
                   <FilePenLine className="h-3.5 w-3.5" aria-hidden />
-                  <span className="truncate">Change Config</span>
+                  <span className="truncate">{t("workspace.changeConfig")}</span>
                 </button>
               </div>
             </div>
@@ -1197,14 +1212,14 @@ function DeviceWorkspace({
                 onClick={onCollect}
                 disabled={!canCollect || submitBusy || configTaskRunning}
                 busy={submitBusy}
-                title={!canCollect ? "Requires device:collect permission" : undefined}
+                title={!canCollect ? t("workspace.collectMissingPerm") : undefined}
               >
                 <Database className="h-4 w-4" aria-hidden />
-                Collect
+                {t("workspace.collect")}
               </Button>
               <Button
-                aria-label="Discover capabilities and collect config"
-                title="Discover capabilities and collect config"
+                aria-label={t("workspace.fullRefresh")}
+                title={t("workspace.fullRefresh")}
                 onClick={onFullRefresh}
                 disabled={configTaskRunning || submitBusy}
                 busy={submitBusy}
@@ -1226,7 +1241,7 @@ function DeviceWorkspace({
 
       {detailMode === "operational" ? (
         <div className="min-h-0 flex-1 overflow-auto p-3">
-          <InfoPanel icon={<Settings2 />} title="NETCONF Object Tree">
+          <InfoPanel icon={<Settings2 />} title={t("workspace.netconfTree")}>
             <ObjectTree
               data={operationalTree}
               selectedPath={selectedPath}
@@ -1236,7 +1251,7 @@ function DeviceWorkspace({
         </div>
       ) : (
         <div className="grid min-h-0 flex-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_clamp(360px,32vw,520px)]">
-          <InfoPanel icon={<Settings2 />} title="Config Model Tree">
+          <InfoPanel icon={<Settings2 />} title={t("workspace.configTree")}>
             <ObjectTree
               data={configTree}
               selectedPath={selectedPath}
@@ -1298,17 +1313,18 @@ function ConfigEditPanel({
   onPreview: () => void;
   onSubmit: () => void;
 }) {
+  const t = useT();
   const blocked = !canSubmitChange || Boolean(disabledReason);
   const missingRequired = !changeSummary.trim() || !changeReason.trim() || !configBody.trim();
   return (
-    <InfoPanel icon={<FilePenLine />} title="Change Control">
+    <InfoPanel icon={<FilePenLine />} title={t("change.controlTitle")}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
-          <Metric label="Device" value={`#${device.id}`} />
-          <Metric label="Datastore" value={datastore} />
+          <Metric label={t("common.device")} value={`#${device.id}`} />
+          <Metric label={t("common.datastore")} value={datastore} />
         </div>
         <div>
-          <FieldLabel>Change summary</FieldLabel>
+          <FieldLabel>{t("change.summary")}</FieldLabel>
           <input
             value={changeSummary}
             onChange={(event) => onChangeSummaryChange(event.target.value)}
@@ -1316,7 +1332,7 @@ function ConfigEditPanel({
           />
         </div>
         <div>
-          <FieldLabel>Reason</FieldLabel>
+          <FieldLabel>{t("change.reason")}</FieldLabel>
           <textarea
             value={changeReason}
             onChange={(event) => onChangeReasonChange(event.target.value)}
@@ -1325,7 +1341,7 @@ function ConfigEditPanel({
           />
         </div>
         <div>
-          <FieldLabel>NETCONF payload</FieldLabel>
+          <FieldLabel>{t("change.netconfPayload")}</FieldLabel>
           <textarea
             value={configBody}
             onChange={(event) => onConfigBodyChange(event.target.value)}
@@ -1335,7 +1351,7 @@ function ConfigEditPanel({
           />
         </div>
         {preflight ? <PreflightSummary preflight={preflight} compact /> : null}
-        {!canSubmitChange ? <p className="text-xs text-warn">Requires device change submission permission.</p> : null}
+        {!canSubmitChange ? <p className="text-xs text-warn">{t("change.requireSubmitPerm")}</p> : null}
         {disabledReason ? <p className="text-xs text-warn">{disabledReason}</p> : null}
         <div className="flex flex-wrap gap-2">
           <Button
@@ -1344,7 +1360,7 @@ function ConfigEditPanel({
             disabled={blocked || missingRequired || busy}
           >
             <Sparkles className="h-4 w-4" aria-hidden />
-            Preview
+            {t("change.preview")}
           </Button>
           <Button
             onClick={onSubmit}
@@ -1352,7 +1368,7 @@ function ConfigEditPanel({
             disabled={blocked || missingRequired || busy || !preflight?.passed}
           >
             <Send className="h-4 w-4" aria-hidden />
-            Submit
+            {t("change.submit")}
           </Button>
         </div>
       </div>
@@ -1375,6 +1391,7 @@ function ObjectTree({
   onLeafChange?: (path: string, value: string) => void;
   editablePath?: (path: string) => boolean;
 }) {
+  const t = useT();
   const [openPaths, setOpenPaths] = useState<Set<string>>(
     () => new Set(["root", "root.data"])
   );
@@ -1405,10 +1422,10 @@ function ObjectTree({
           <p className="truncate font-mono text-[11px] text-muted">{selectedPath}</p>
         </div>
         <div className="flex shrink-0 gap-1.5">
-          <Button aria-label="Expand all" title="Expand all" onClick={expandAll} className="h-8 w-8 px-0 bg-paper">
+          <Button aria-label={t("common.expandAll")} title={t("common.expandAll")} onClick={expandAll} className="h-8 w-8 px-0 bg-paper">
             <ChevronsRight className="h-3.5 w-3.5" aria-hidden />
           </Button>
-          <Button aria-label="Collapse all" title="Collapse all" onClick={collapseAll} className="h-8 w-8 px-0 bg-paper">
+          <Button aria-label={t("common.collapseAll")} title={t("common.collapseAll")} onClick={collapseAll} className="h-8 w-8 px-0 bg-paper">
             <ChevronsLeft className="h-3.5 w-3.5" aria-hidden />
           </Button>
         </div>
@@ -1457,6 +1474,7 @@ function TreeRows({
   onSelectPath: (path: string) => void;
   onLeafChange?: (path: string, value: string) => void;
 }) {
+  const t = useT();
   const objectLike = isObjectLike(value);
   const open = openPaths.has(path);
   const entries = objectLike ? objectEntries(value) : [];
@@ -1498,7 +1516,11 @@ function TreeRows({
             />
           ) : (
             <p className="truncate font-mono text-xs text-muted" title={formatTreeValue(value)}>
-              {objectLike ? `${entries.length} ${Array.isArray(value) ? "items" : "children"}` : formatTreeValue(value)}
+              {objectLike
+                ? Array.isArray(value)
+                  ? t("tree.itemsCount", { count: entries.length })
+                  : t("tree.childrenCount", { count: entries.length })
+                : formatTreeValue(value)}
             </p>
           )}
         </div>
@@ -1639,6 +1661,7 @@ function clamp(value: number, min: number, max: number) {
 
 function ChangesTab() {
   const { hasPermission } = useSession();
+  const t = useT();
   const [changes, setChanges] = useState<ChangeRequestRead[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1656,11 +1679,11 @@ function ChangesTab() {
       const resp = await api.listChangeRequests();
       setChanges(resp.items);
     } catch (e) {
-      if (!options.silent) setError(errorMessage(e));
+      if (!options.silent) setError(errorMessage(e, t));
     } finally {
       if (!options.silent) setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadChanges();
@@ -1678,47 +1701,47 @@ function ChangesTab() {
       await api.approveChangeRequest(id);
       await loadChanges();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
   async function handleReject(id: number) {
-    const note = window.prompt("Rejection reason:");
+    const note = window.prompt(t("changes.rejectionReasonPrompt"));
     if (!note) return;
     try {
       await api.rejectChangeRequest(id, note);
       await loadChanges();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
   async function handleManualRollback(cr: ChangeRequestRead) {
     if (!cr.baseline_snapshot_id) {
-      setError("No baseline snapshot is available for rollback.");
+      setError(t("changes.noBaselineForRollback"));
       return;
     }
-    const reason = window.prompt("Rollback proposal reason:");
+    const reason = window.prompt(t("changes.rollbackProposalReasonPrompt"));
     if (!reason?.trim()) return;
     try {
       await api.submitRollback({
         device_id: cr.device_id,
         datastore: cr.datastore,
-        change_summary: `Rollback proposal for change #${cr.id}`,
+        change_summary: t("changes.rollbackProposalSummary", { id: cr.id }),
         reason,
         rollback_target_snapshot_id: cr.baseline_snapshot_id,
         rollback_of_change_id: cr.id
       });
       await loadChanges();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Change Requests</h2>
+        <h2 className="text-lg font-semibold">{t("changes.title")}</h2>
         <Button onClick={() => void loadChanges()} busy={loading} className="h-9 w-9 px-0">
           <RefreshCw className="h-4 w-4" aria-hidden />
         </Button>
@@ -1727,16 +1750,16 @@ function ChangesTab() {
       {error ? <ErrorPanel message={error} onRetry={() => void loadChanges()} /> : null}
 
       {canSubmit ? (
-        <InfoPanel icon={<Router />} title="Contextual Submission">
+        <InfoPanel icon={<Router />} title={t("changes.contextSubmission")}>
           <p className="text-sm text-muted">
-            Open a device profile or snapshot to submit a normal change request.
+            {t("changes.contextSubmissionHint")}
           </p>
         </InfoPanel>
       ) : null}
       {canExecute && <DirectExecuteForm onSuccess={() => void loadChanges()} />}
 
       {changes.length === 0 && !loading ? (
-        <EmptyState icon={<ClipboardList className="h-6 w-6" />} title="No change requests" />
+        <EmptyState icon={<ClipboardList className="h-6 w-6" />} title={t("changes.empty")} />
       ) : null}
 
       <div className="space-y-3">
@@ -1752,32 +1775,35 @@ function ChangesTab() {
                   <StatusBadge status={cr.status} />
                   {cr.direct_execute && (
                     <span className="rounded bg-warning/20 px-2 py-0.5 font-mono text-[11px] text-warning">
-                      direct-execute
+                      {t("changes.directExecuteBadge")}
                     </span>
                   )}
                   {cr.is_rollback && (
                     <span className="rounded bg-info/20 px-2 py-0.5 font-mono text-[11px] text-info flex items-center gap-1">
-                      <ListRestart className="h-3 w-3" /> rollback
+                      <ListRestart className="h-3 w-3" /> {t("changes.rollbackBadge")}
                     </span>
                   )}
                   <span className="font-mono text-xs text-muted">#{cr.id}</span>
                 </div>
                 <p className="mt-1 text-sm font-semibold">{cr.change_summary}</p>
                 <p className="mt-0.5 text-xs text-muted">
-                  Device {cr.device_id} · {cr.datastore} · by{" "}
-                  {cr.submitter?.display_name ?? "unknown"}
+                  {t("changes.deviceLine", {
+                    device: cr.device_id,
+                    datastore: cr.datastore,
+                    submitter: cr.submitter?.display_name ?? t("changes.byUnknown")
+                  })}
                 </p>
-                <p className="mt-0.5 text-xs text-muted">Reason: {cr.reason}</p>
+                <p className="mt-0.5 text-xs text-muted">{t("changes.reasonLabel", { reason: cr.reason })}</p>
                 <div className="mt-2 grid gap-2 text-xs text-muted sm:grid-cols-3">
-                  <Metric label="Approver" value={cr.approver?.display_name ?? "-"} />
-                  <Metric label="Execution" value={cr.execution_task_id ?? "-"} />
-                  <Metric label="Verification" value={cr.verification_status ?? "-"} />
+                  <Metric label={t("changes.approver")} value={cr.approver?.display_name ?? "-"} />
+                  <Metric label={t("changes.execution")} value={cr.execution_task_id ?? "-"} />
+                  <Metric label={t("changes.verification")} value={cr.verification_status ?? "-"} />
                 </div>
                 <PreflightSummary preflight={changePreflightFromRequest(cr)} compact />
                 {cr.verification_summary ? (
                   <p className="mt-2 text-xs text-muted">
                     {String(cr.verification_summary.error_message ?? "") ||
-                      `Post-change snapshot ${cr.verification_snapshot_id ?? "-"}`}
+                      t("changes.postChangeSnapshot", { id: cr.verification_snapshot_id ?? "-" })}
                   </p>
                 ) : null}
 
@@ -1785,11 +1811,11 @@ function ChangesTab() {
                 {cr.is_rollback && (
                   <div className="mt-3 rounded border border-info/30 bg-info/10 p-3 text-xs space-y-1">
                     <p className="font-semibold text-info flex items-center gap-1">
-                      <ListRestart className="h-3.5 w-3.5" /> Rollback Context
+                      <ListRestart className="h-3.5 w-3.5" /> {t("changes.rollbackContext")}
                     </p>
                     {cr.rollback_of_change_id ? (
                       <p className="text-muted">
-                        Origin change:{" "}
+                        {t("changes.originChange")}{" "}
                         <a className="font-mono underline" href={`#change-${cr.rollback_of_change_id}`}>
                           #{cr.rollback_of_change_id}
                         </a>
@@ -1797,7 +1823,7 @@ function ChangesTab() {
                       </p>
                     ) : null}
                     {cr.rollback_target_snapshot_id ? (
-                      <p className="text-muted">Target snapshot: <span className="font-mono">#{cr.rollback_target_snapshot_id}</span>
+                      <p className="text-muted">{t("changes.targetSnapshot")} <span className="font-mono">#{cr.rollback_target_snapshot_id}</span>
                         {cr.rollback_target_snapshot ? ` · ${digestShort(cr.rollback_target_snapshot.content_digest)}` : ""}
                       </p>
                     ) : null}
@@ -1808,34 +1834,30 @@ function ChangesTab() {
                 {cr.status === "verification_failed" && !cr.is_rollback && cr.pending_rollback_proposal_id ? (
                   <div className="mt-3 rounded border border-warning/30 bg-warning/10 p-3 text-xs">
                     <p className="text-warning font-semibold flex items-center gap-1">
-                      <AlertTriangle className="h-3.5 w-3.5" /> Verification failed — rollback proposed
+                      <AlertTriangle className="h-3.5 w-3.5" /> {t("changes.verificationFailedRollbackProposed")}
                     </p>
                     <p className="mt-1 text-muted">
-                      Auto-rollback proposal{" "}
-                      <a
-                        href={`#change-${cr.pending_rollback_proposal_id}`}
-                        className="font-mono underline"
-                      >
-                        #{cr.pending_rollback_proposal_id}
-                      </a>{" "}
-                      is {cr.pending_rollback_proposal?.status ?? "pending_approval"}.
+                      {t("changes.autoRollbackProposalIs", {
+                        link: `#${cr.pending_rollback_proposal_id}`,
+                        status: cr.pending_rollback_proposal?.status ?? "pending_approval"
+                      })}
                     </p>
                   </div>
                 ) : cr.status === "verification_failed" && !cr.is_rollback && !cr.pending_rollback_proposal_id ? (
                   <div className="mt-3 rounded border border-warning/30 bg-warning/10 p-3 text-xs">
                     <p className="text-warning font-semibold flex items-center gap-1">
-                      <AlertTriangle className="h-3.5 w-3.5" /> Verification failed
+                      <AlertTriangle className="h-3.5 w-3.5" /> {t("changes.verificationFailed")}
                     </p>
                     {canApprove && cr.baseline_snapshot_id ? (
                       <Button
                         onClick={() => void handleManualRollback(cr)}
                         className="mt-2 h-8 px-2 text-xs bg-paper text-ink"
                       >
-                        <ListRestart className="h-3.5 w-3.5" /> Propose Rollback
+                        <ListRestart className="h-3.5 w-3.5" /> {t("changes.proposeRollback")}
                       </Button>
                     ) : (
                       <p className="mt-1 text-muted">
-                        No rollback proposal available (baseline snapshot may not be restorable).
+                        {t("changes.noRollbackProposalAvailable")}
                       </p>
                     )}
                   </div>
@@ -1845,9 +1867,9 @@ function ChangesTab() {
                 {cr.status === "verification_failed" && cr.is_rollback && (
                   <div className="mt-3 rounded border border-error/30 bg-error/10 p-3 text-xs">
                     <p className="text-error font-semibold flex items-center gap-1">
-                      <XCircle className="h-3.5 w-3.5" /> Rollback verification failed
+                      <XCircle className="h-3.5 w-3.5" /> {t("changes.rollbackVerificationFailed")}
                     </p>
-                    <p className="mt-1 text-muted">No further automatic rollback will be proposed. Manual intervention required.</p>
+                    <p className="mt-1 text-muted">{t("changes.rollbackVerificationFailedHint")}</p>
                   </div>
                 )}
               </div>
@@ -1857,13 +1879,13 @@ function ChangesTab() {
                     onClick={() => void handleApprove(cr.id)}
                     className="h-8 px-2 text-xs"
                   >
-                    <CheckCircle className="h-3.5 w-3.5" /> Approve
+                    <CheckCircle className="h-3.5 w-3.5" /> {t("changes.approve")}
                   </Button>
                   <Button
                     onClick={() => void handleReject(cr.id)}
                     className="h-8 px-2 text-xs bg-paper text-error"
                   >
-                    <XCircle className="h-3.5 w-3.5" /> Reject
+                    <XCircle className="h-3.5 w-3.5" /> {t("changes.reject")}
                   </Button>
                 </div>
               )}
@@ -1888,6 +1910,7 @@ function ChangeRequestForm({
   disabledReason?: string | null;
   compact?: boolean;
 }) {
+  const t = useT();
   const [deviceId, setDeviceId] = useState(initialDeviceId ? String(initialDeviceId) : "");
   const [datastore, setDatastore] = useState(initialDatastore ?? "running");
   const [summary, setSummary] = useState("");
@@ -1923,7 +1946,7 @@ function ChangeRequestForm({
     });
     setPreflight(result);
     if (!result.passed) {
-      throw new Error(result.blockers.join(", ") || "Preflight failed");
+      throw new Error(result.blockers.join(", ") || t("changes.preflightFailed"));
     }
     return result;
   }
@@ -1958,7 +1981,7 @@ function ChangeRequestForm({
       setPreflight(null);
       onSuccess();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     } finally {
       setLoading(false);
     }
@@ -1967,21 +1990,21 @@ function ChangeRequestForm({
   return (
     <div className="rounded border border-warm bg-canvas/95 p-4">
       <h3 className="mb-3 font-semibold text-sm">
-        {compact ? "Request Config Change" : "Submit Change Request"}
+        {compact ? t("changes.requestConfigChange") : t("changes.submitChangeRequest")}
       </h3>
       <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
         <div className={cn("grid gap-3", compact ? "" : "sm:grid-cols-2")}>
           {initialDeviceId ? (
-            <Metric label="Device" value={`#${initialDeviceId}`} />
+            <Metric label={t("common.device")} value={`#${initialDeviceId}`} />
           ) : null}
           <div>
-            <FieldLabel>Datastore</FieldLabel>
+            <FieldLabel>{t("common.datastore")}</FieldLabel>
             <DatastoreSelect value={datastore} onValueChange={setDatastore} />
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <FieldLabel>Change summary</FieldLabel>
+            <FieldLabel>{t("change.summary")}</FieldLabel>
             <input
               type="text"
               required
@@ -1991,7 +2014,7 @@ function ChangeRequestForm({
             />
           </div>
           <div>
-            <FieldLabel>Change ref</FieldLabel>
+            <FieldLabel>{t("changes.changeRef")}</FieldLabel>
             <input
               type="text"
               value={changeRef}
@@ -2001,7 +2024,7 @@ function ChangeRequestForm({
           </div>
         </div>
         <div>
-          <FieldLabel>Config body</FieldLabel>
+          <FieldLabel>{t("changes.configBody")}</FieldLabel>
           <textarea
             required
             value={configBody}
@@ -2011,7 +2034,7 @@ function ChangeRequestForm({
           />
         </div>
         <div>
-          <FieldLabel>Reason</FieldLabel>
+          <FieldLabel>{t("change.reason")}</FieldLabel>
           <textarea
             required
             value={reason}
@@ -2025,7 +2048,7 @@ function ChangeRequestForm({
         {error ? <p className="text-xs text-error">{error}</p> : null}
         <Button type="submit" busy={loading} disabled={Boolean(disabledReason)}>
           <Send className="h-4 w-4" />
-          {preflight?.passed ? "Submit" : "Preview"}
+          {preflight?.passed ? t("change.submit") : t("change.preview")}
         </Button>
       </form>
     </div>
@@ -2033,6 +2056,7 @@ function ChangeRequestForm({
 }
 
 function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [deviceId, setDeviceId] = useState("");
   const [datastore, setDatastore] = useState("running");
@@ -2049,7 +2073,7 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!reason.trim()) { setError("Reason is required for direct execution"); return; }
+    if (!reason.trim()) { setError(t("changes.directReasonRequired")); return; }
     setLoading(true);
     setError(null);
     try {
@@ -2062,7 +2086,7 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
           reason
         });
         setPreflight(result);
-        if (!result.passed) throw new Error(result.blockers.join(", ") || "Preflight failed");
+        if (!result.passed) throw new Error(result.blockers.join(", ") || t("changes.preflightFailed"));
         setLoading(false);
         return;
       }
@@ -2078,7 +2102,7 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
       setPreflight(null);
       onSuccess();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     } finally {
       setLoading(false);
     }
@@ -2087,18 +2111,18 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
   if (!open) {
     return (
       <Button onClick={() => setOpen(true)} className="text-sm">
-        <Send className="h-4 w-4" /> Direct Execute
+        <Send className="h-4 w-4" /> {t("changes.directExecute")}
       </Button>
     );
   }
 
   return (
     <div className="rounded border border-warm bg-canvas/95 p-4">
-      <h3 className="mb-3 font-semibold text-sm">Direct Execute (bypasses approval)</h3>
+      <h3 className="mb-3 font-semibold text-sm">{t("changes.directExecuteSubtitle")}</h3>
       <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <FieldLabel>Device ID</FieldLabel>
+            <FieldLabel>{t("changes.deviceId")}</FieldLabel>
             <input
               type="number"
               required
@@ -2108,12 +2132,12 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
             />
           </div>
           <div>
-            <FieldLabel>Datastore</FieldLabel>
+            <FieldLabel>{t("common.datastore")}</FieldLabel>
             <DatastoreSelect value={datastore} onValueChange={setDatastore} />
           </div>
         </div>
         <div>
-          <FieldLabel>Change summary</FieldLabel>
+          <FieldLabel>{t("change.summary")}</FieldLabel>
           <input
             type="text"
             required
@@ -2123,7 +2147,7 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
           />
         </div>
         <div>
-          <FieldLabel>Config body</FieldLabel>
+          <FieldLabel>{t("changes.configBody")}</FieldLabel>
           <textarea
             required
             value={configBody}
@@ -2133,7 +2157,7 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
           />
         </div>
         <div>
-          <FieldLabel>Reason (required)</FieldLabel>
+          <FieldLabel>{t("change.reason")}</FieldLabel>
           <textarea
             required
             value={reason}
@@ -2146,9 +2170,9 @@ function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
         {error ? <p className="text-xs text-error">{error}</p> : null}
         <div className="flex gap-2">
           <Button type="submit" busy={loading}>
-            {preflight?.passed ? "Execute" : "Preview"}
+            {preflight?.passed ? t("changes.execute") : t("change.preview")}
           </Button>
-          <Button type="button" onClick={() => setOpen(false)} className="bg-paper">Cancel</Button>
+          <Button type="button" onClick={() => setOpen(false)} className="bg-paper">{t("common.cancel")}</Button>
         </div>
       </form>
     </div>
@@ -2168,8 +2192,11 @@ function RollbackSubmitForm({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const t = useT();
   const [reason, setReason] = useState("");
-  const [summary, setSummary] = useState(`Rollback to snapshot #${snapshot.id} (${digestShort(snapshot.content_digest)})`);
+  const [summary, setSummary] = useState(
+    `${t("rollback.restoreToSnapshot", { id: snapshot.id })} (${digestShort(snapshot.content_digest)})`
+  );
   const [preflight, setPreflight] = useState<ChangePreflightResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2186,11 +2213,11 @@ function RollbackSubmitForm({
       });
       setPreflight(result);
       if (!result.passed) {
-        const msgs = result.blockers.map((b) => formatRollbackBlocker(b));
-        throw new Error(msgs.join("; "));
+        const msgs = result.blockers.map((b) => formatRollbackBlocker(b, t));
+        throw new Error(msgs.join(t("rollback.preflightBlockerSeparator")));
       }
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     } finally {
       setLoading(false);
     }
@@ -2198,7 +2225,7 @@ function RollbackSubmitForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!reason.trim()) { setError("Reason is required"); return; }
+    if (!reason.trim()) { setError(t("changes.reasonRequired")); return; }
     setLoading(true);
     setError(null);
     try {
@@ -2216,7 +2243,7 @@ function RollbackSubmitForm({
       });
       onSuccess();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     } finally {
       setLoading(false);
     }
@@ -2227,24 +2254,26 @@ function RollbackSubmitForm({
       <div className="mb-3 flex items-center justify-between">
         <h4 className="text-sm font-semibold flex items-center gap-1.5">
           <ListRestart className="h-4 w-4" />
-          Restore to Snapshot #{snapshot.id}
+          {t("rollback.restoreToSnapshot", { id: snapshot.id })}
         </h4>
-        <button onClick={onClose} className="text-muted hover:text-ink text-xs">✕ Cancel</button>
+        <button onClick={onClose} className="text-muted hover:text-ink text-xs">✕ {t("rollback.cancel")}</button>
       </div>
       <div className="mb-3 grid grid-cols-2 gap-2 text-xs text-muted">
-        <Metric label="Snapshot" value={`#${snapshot.id}`} />
-        <Metric label="Datastore" value={snapshot.datastore} />
-        <Metric label="Digest" value={digestShort(snapshot.content_digest)} />
-        <Metric label="Collected" value={formatDate(snapshot.collected_at)} />
+        <Metric label={t("rollback.snapshot")} value={`#${snapshot.id}`} />
+        <Metric label={t("common.datastore")} value={snapshot.datastore} />
+        <Metric label={t("rollback.digest")} value={digestShort(snapshot.content_digest)} />
+        <Metric label={t("rollback.collected")} value={formatDate(snapshot.collected_at)} />
       </div>
       {!snapshot.rollback_eligible ? (
         <div className="rounded border border-error/20 bg-error/10 p-3 text-xs text-error">
-          This snapshot cannot be restored: {snapshot.rollback_blocker ?? "normalized content unavailable"}
+          {t("rollback.notRestorable", {
+            reason: snapshot.rollback_blocker ?? t("rollback.normalizedContentUnavailable")
+          })}
         </div>
       ) : (
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
           <div>
-            <FieldLabel>Change summary</FieldLabel>
+            <FieldLabel>{t("change.summary")}</FieldLabel>
             <input
               type="text"
               required
@@ -2254,13 +2283,13 @@ function RollbackSubmitForm({
             />
           </div>
           <div>
-            <FieldLabel>Reason (required)</FieldLabel>
+            <FieldLabel>{t("change.reason")}</FieldLabel>
             <textarea
               required
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={2}
-              placeholder="Why are you restoring this snapshot?"
+              placeholder={t("rollback.reasonPlaceholder")}
               className="mt-1 w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
             />
           </div>
@@ -2272,24 +2301,24 @@ function RollbackSubmitForm({
                 ) : (
                   <AlertTriangle className="h-4 w-4 text-error" />
                 )}
-                <span className="font-medium">{preflight.passed ? "Preflight passed" : "Preflight blocked"}</span>
+                <span className="font-medium">{preflight.passed ? t("rollback.preflightPassed") : t("rollback.preflightBlocked")}</span>
               </div>
               {preflight.blockers.length > 0 ? (
                 <ul className="ml-6 space-y-0.5 text-error">
-                  {preflight.blockers.map((b) => <li key={b}>{formatRollbackBlocker(b)}</li>)}
+                  {preflight.blockers.map((b) => <li key={b}>{formatRollbackBlocker(b, t)}</li>)}
                 </ul>
               ) : null}
               {preflight.payload ? (
-                <Metric label="Payload digest" value={digestShort(preflight.payload.digest)} />
+                <Metric label={t("rollback.payloadDigest")} value={digestShort(preflight.payload.digest)} />
               ) : null}
               {preflight.risk_summary ? (
-                <Metric label="Risk" value={String((preflight.risk_summary as ChangeRiskSummary).risk_level ?? "-")} />
+                <Metric label={t("rollback.risk")} value={String((preflight.risk_summary as ChangeRiskSummary).risk_level ?? "-")} />
               ) : null}
             </div>
           ) : null}
           {error ? <p className="text-xs text-error">{error}</p> : null}
           <Button type="submit" busy={loading}>
-            {preflight?.passed ? <><CheckCircle className="h-4 w-4" /> Submit Rollback</> : <><Sparkles className="h-4 w-4" /> Preview Preflight</>}
+            {preflight?.passed ? <><CheckCircle className="h-4 w-4" /> {t("rollback.submitRollback")}</> : <><Sparkles className="h-4 w-4" /> {t("rollback.previewPreflight")}</>}
           </Button>
         </form>
       )}
@@ -2300,6 +2329,7 @@ function RollbackSubmitForm({
 // ── Admin Tab ──────────────────────────────────────────────────────────────
 
 function AdminTab() {
+  const t = useT();
   const [users, setUsers] = useState<UserRead[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -2321,11 +2351,11 @@ function AdminTab() {
       setRoles(nextRoles);
       setPermissions(nextPermissions);
     } catch (e) {
-      if (!options.silent) setError(errorMessage(e));
+      if (!options.silent) setError(errorMessage(e, t));
     } finally {
       if (!options.silent) setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { void loadAdminData(); }, [loadAdminData]);
   useRealtimeRefresh(() => loadAdminData({ silent: true }), REALTIME_SLOW_REFRESH_MS);
@@ -2334,7 +2364,7 @@ function AdminTab() {
     <div className="mx-auto grid max-w-6xl gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Access Control</h2>
+          <h2 className="text-lg font-semibold">{t("admin.accessControl")}</h2>
           <Button onClick={() => void loadAdminData()} busy={loading} className="h-9 w-9 px-0">
             <RefreshCw className="h-4 w-4" aria-hidden />
           </Button>
@@ -2348,7 +2378,7 @@ function AdminTab() {
                 <div>
                   <p className="text-sm font-semibold">{u.display_name}</p>
                   <p className="text-xs text-muted">
-                    {u.username} · {u.roles.map((r) => r.name).join(", ") || "no roles"}
+                    {u.username} · {u.roles.map((r) => r.name).join(", ") || t("admin.noRoles")}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2357,7 +2387,7 @@ function AdminTab() {
                     onClick={() => void toggleUser(u)}
                     className="h-8 px-2 text-xs"
                   >
-                    {u.is_active ? "Disable" : "Enable"}
+                    {u.is_active ? t("admin.disable") : t("admin.enable")}
                   </Button>
                 </div>
               </div>
@@ -2377,9 +2407,9 @@ function AdminTab() {
           onChange={() => void loadAdminData()}
         />
         <div className="rounded border border-warm bg-canvas/95 p-4">
-          <h3 className="mb-3 text-sm font-semibold">System Configuration</h3>
+          <h3 className="mb-3 text-sm font-semibold">{t("admin.systemConfig")}</h3>
           <div className="space-y-2 text-xs text-muted">
-            <p>JWT, CORS, cookie, audit retention</p>
+            <p>{t("admin.systemConfigDesc")}</p>
             <StatusBadge status="ready" />
           </div>
         </div>
@@ -2394,12 +2424,13 @@ function AdminTab() {
       else await api.enableUser(user.id);
       await loadAdminData();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 }
 
 function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
+  const t = useT();
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -2421,7 +2452,7 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
       setPassword("");
       onSuccess();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     } finally {
       setLoading(false);
     }
@@ -2429,10 +2460,10 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <div className="rounded border border-warm bg-canvas/95 p-4">
-      <h3 className="mb-3 text-sm font-semibold">Create User</h3>
+      <h3 className="mb-3 text-sm font-semibold">{t("admin.createUser")}</h3>
       <form onSubmit={(e) => void handleSubmit(e)} className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto]">
         <div>
-          <FieldLabel>Username</FieldLabel>
+          <FieldLabel>{t("admin.username")}</FieldLabel>
           <input
             required
             minLength={2}
@@ -2442,7 +2473,7 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
           />
         </div>
         <div>
-          <FieldLabel>Display name</FieldLabel>
+          <FieldLabel>{t("admin.displayName")}</FieldLabel>
           <input
             required
             value={displayName}
@@ -2451,7 +2482,7 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
           />
         </div>
         <div>
-          <FieldLabel>Password</FieldLabel>
+          <FieldLabel>{t("admin.password")}</FieldLabel>
           <input
             required
             type="password"
@@ -2462,7 +2493,7 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
           />
         </div>
         <Button type="submit" busy={loading} className="mt-5">
-          Create
+          {t("admin.create")}
         </Button>
       </form>
       {error ? <p className="mt-2 text-xs text-error">{error}</p> : null}
@@ -2479,6 +2510,7 @@ function UserRoleControls({
   roles: Role[];
   onChange: () => void;
 }) {
+  const t = useT();
   const assignedRoleIds = new Set(user.roles.map((role) => role.id));
   const availableRoles = roles.filter((role) => !assignedRoleIds.has(role.id));
   const [roleId, setRoleId] = useState("");
@@ -2492,7 +2524,7 @@ function UserRoleControls({
       setRoleId("");
       onChange();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
@@ -2502,7 +2534,7 @@ function UserRoleControls({
       await api.removeRole(user.id, role.id);
       onChange();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     }
   }
 
@@ -2525,7 +2557,7 @@ function UserRoleControls({
           onChange={(e) => setRoleId(e.target.value)}
           className="h-8 min-w-40 rounded border border-warm bg-paper px-2 text-sm"
         >
-          <option value="">Role</option>
+          <option value="">{t("admin.role")}</option>
           {availableRoles.map((role) => (
             <option key={role.id} value={role.id}>{role.name}</option>
           ))}
@@ -2535,7 +2567,7 @@ function UserRoleControls({
           disabled={!roleId}
           className="h-8 px-2 text-xs"
         >
-          Assign
+          {t("admin.assign")}
         </Button>
       </div>
       {error ? <p className="mt-2 text-xs text-error">{error}</p> : null}
@@ -2552,6 +2584,7 @@ function RolePermissionEditor({
   permissions: Permission[];
   onChange: () => void;
 }) {
+  const t = useT();
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
   const [selectedPermissionIds, setSelectedPermissionIds] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -2577,7 +2610,7 @@ function RolePermissionEditor({
       await api.updateRolePermissions(selectedRole.id, Array.from(selectedPermissionIds));
       onChange();
     } catch (e) {
-      setError(errorMessage(e));
+      setError(errorMessage(e, t));
     } finally {
       setSaving(false);
     }
@@ -2595,7 +2628,7 @@ function RolePermissionEditor({
   return (
     <div className="rounded border border-warm bg-canvas/95 p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Roles & Permissions</h3>
+        <h3 className="text-sm font-semibold">{t("admin.rolesPermissions")}</h3>
       </div>
       <select
         value={selectedRole?.id ?? ""}
@@ -2628,7 +2661,7 @@ function RolePermissionEditor({
         disabled={!selectedRole}
         className="mt-3"
       >
-        Save
+        {t("admin.save")}
       </Button>
     </div>
   );
@@ -2638,6 +2671,7 @@ function RolePermissionEditor({
 
 function AuditTab() {
   const { hasPermission } = useSession();
+  const t = useT();
   const [logs, setLogs] = useState<AuditLogRead[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2652,11 +2686,11 @@ function AuditTab() {
       const resp = await api.listAuditLogs({ limit: 50 });
       setLogs(resp.items);
     } catch (e) {
-      if (!options.silent) setError(errorMessage(e));
+      if (!options.silent) setError(errorMessage(e, t));
     } finally {
       if (!options.silent) setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { void loadLogs(); }, [loadLogs]);
   useRealtimeRefresh(() => loadLogs({ silent: true }), REALTIME_NORMAL_REFRESH_MS);
@@ -2664,26 +2698,26 @@ function AuditTab() {
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Audit Log</h2>
+        <h2 className="text-lg font-semibold">{t("audit.title")}</h2>
         <Button onClick={() => void loadLogs()} busy={loading} className="h-9 w-9 px-0">
           <RefreshCw className="h-4 w-4" aria-hidden />
         </Button>
       </div>
       {error ? <ErrorPanel message={error} onRetry={() => void loadLogs()} /> : null}
       {logs.length === 0 && !loading ? (
-        <EmptyState icon={<FileClock className="h-6 w-6" />} title="No audit events" />
+        <EmptyState icon={<FileClock className="h-6 w-6" />} title={t("audit.empty")} />
       ) : null}
       <div className="overflow-x-auto rounded border border-warm">
         <table className="w-full min-w-[760px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-warm text-left font-mono text-[11px] uppercase text-muted">
-              <th className="px-3 py-2 font-medium">Time</th>
-              <th className="px-3 py-2 font-medium">Action</th>
-              <th className="px-3 py-2 font-medium">Actor</th>
-              <th className="px-3 py-2 font-medium">Target</th>
-              <th className="px-3 py-2 font-medium">Permission</th>
-              <th className="px-3 py-2 font-medium">Outcome</th>
-              {hasFullAudit ? <th className="px-3 py-2 font-medium">Context</th> : null}
+              <th className="px-3 py-2 font-medium">{t("audit.time")}</th>
+              <th className="px-3 py-2 font-medium">{t("audit.action")}</th>
+              <th className="px-3 py-2 font-medium">{t("audit.actor")}</th>
+              <th className="px-3 py-2 font-medium">{t("audit.target")}</th>
+              <th className="px-3 py-2 font-medium">{t("audit.permission")}</th>
+              <th className="px-3 py-2 font-medium">{t("audit.outcome")}</th>
+              {hasFullAudit ? <th className="px-3 py-2 font-medium">{t("audit.context")}</th> : null}
             </tr>
           </thead>
           <tbody>
@@ -2775,6 +2809,7 @@ function isRealtimeActiveStatus(status: string | null | undefined) {
 }
 
 function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Promise<void> }) {
+  const t = useT();
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("830");
@@ -2804,7 +2839,7 @@ function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Prom
       setPassword("");
       await onSuccess(device.id);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(errorMessage(caught, t));
     } finally {
       setLoading(false);
     }
@@ -2813,12 +2848,12 @@ function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Prom
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="mb-3 rounded border border-warm bg-paper p-3">
       <div className="grid gap-2">
-        <FieldLabel>New Device</FieldLabel>
+        <FieldLabel>{t("createDevice.title")}</FieldLabel>
         <input
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="name"
+          placeholder={t("createDevice.namePlaceholder")}
           className="w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
         />
         <div className="grid grid-cols-[1fr_76px] gap-2">
@@ -2826,7 +2861,7 @@ function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Prom
             required
             value={host}
             onChange={(e) => setHost(e.target.value)}
-            placeholder="host"
+            placeholder={t("createDevice.hostPlaceholder")}
             className="min-w-0 rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
           />
           <input
@@ -2843,19 +2878,19 @@ function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Prom
           required
           value={username}
           onChange={(e) => setUsername(e.target.value)}
-          placeholder="username"
+          placeholder={t("createDevice.usernamePlaceholder")}
           className="w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
         />
         <input
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="password"
+          placeholder={t("createDevice.passwordPlaceholder")}
           className="w-full rounded border border-warm bg-canvas px-2 py-1.5 text-sm"
         />
         {error ? <p className="text-xs text-error">{error}</p> : null}
         <Button type="submit" busy={loading} className="w-full">
-          <Plus className="h-4 w-4" /> Add
+          <Plus className="h-4 w-4" /> {t("createDevice.add")}
         </Button>
       </div>
     </form>
@@ -2869,28 +2904,29 @@ function PreflightSummary({
   preflight: ChangePreflightResponse | null;
   compact?: boolean;
 }) {
+  const t = useT();
   if (!preflight) return null;
   return (
     <div className="rounded border border-warm bg-paper p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <FieldLabel>Preflight</FieldLabel>
+        <FieldLabel>{t("preflight.label")}</FieldLabel>
         <StatusBadge status={preflight.passed ? "passed" : "failed"} />
       </div>
       <div className={cn("mt-2 grid gap-2 text-xs", compact ? "" : "sm:grid-cols-2")}>
         <Metric
-          label={preflight.mode === "rollback" ? "Current" : "Baseline"}
+          label={preflight.mode === "rollback" ? t("preflight.current") : t("preflight.baseline")}
           value={preflight.baseline_snapshot?.id ?? "-"}
         />
         {preflight.mode === "rollback" ? (
-          <Metric label="Target" value={preflight.rollback_target_snapshot?.id ?? "-"} />
+          <Metric label={t("preflight.target")} value={preflight.rollback_target_snapshot?.id ?? "-"} />
         ) : null}
-        <Metric label="Payload" value={preflight.payload ? `${preflight.payload.length} bytes` : "-"} />
-        <Metric label="Risk" value={preflight.risk_summary?.risk_level ?? "-"} />
-        <Metric label="Digest" value={digestShort(preflight.payload?.digest)} />
+        <Metric label={t("preflight.payload")} value={preflight.payload ? t("preflight.payloadBytes", { count: preflight.payload.length }) : "-"} />
+        <Metric label={t("preflight.risk")} value={preflight.risk_summary?.risk_level ?? "-"} />
+        <Metric label={t("preflight.digest")} value={digestShort(preflight.payload?.digest)} />
       </div>
       {preflight.blockers.length > 0 ? (
         <p className="mt-2 text-xs text-error">
-          {preflight.blockers.map((b) => formatRollbackBlocker(b)).join(", ")}
+          {preflight.blockers.map((b) => formatRollbackBlocker(b, t)).join(", ")}
         </p>
       ) : null}
     </div>
@@ -2920,6 +2956,7 @@ function changePreflightFromRequest(cr: ChangeRequestRead): ChangePreflightRespo
 function DeviceListItem({
   device, active, canManage, showDelete = true, onSelect, onDelete
 }: { device: Device; active: boolean; canManage: boolean; showDelete?: boolean; onSelect: () => void; onDelete: () => Promise<void> }) {
+  const t = useT();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -2948,21 +2985,21 @@ function DeviceListItem({
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">{device.name}</p>
             <p className="mt-1 truncate font-mono text-[11px] text-muted">
-              {device.group ?? "ungrouped"}
+              {device.group ?? t("device.ungrouped")}
             </p>
           </div>
           <StatusBadge status={device.status} />
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted">
-          <Metric label="Discovery" value={summaryValue(device.last_discovery?.summary)} />
-          <Metric label="Snapshot" value={digestShort(device.last_config_snapshot?.content_digest)} />
+          <Metric label={t("table.discovery")} value={summaryValue(t, device.last_discovery?.summary)} />
+          <Metric label={t("rollback.snapshot")} value={digestShort(device.last_config_snapshot?.content_digest)} />
         </div>
       </button>
       {canManage && showDelete ? (
         <div className="mt-2 flex items-center justify-end gap-1 border-t border-warm/50 pt-2">
           {confirming ? (
             <>
-              <span className="mr-1 text-[11px] font-medium text-red-500">确认删除?</span>
+              <span className="mr-1 text-[11px] font-medium text-red-500">{t("common.confirmDelete")}</span>
               <Button
                 busy={deleting}
                 onClick={(e) => void handleDelete(e)}
@@ -2979,8 +3016,8 @@ function DeviceListItem({
             </>
           ) : (
             <Button
-              aria-label="Delete device"
-              title="删除设备"
+              aria-label={t("devices.delete")}
+              title={t("devices.delete")}
               onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
               className="h-6 w-6 px-0 text-muted hover:border-red-400 hover:text-red-500"
             >
@@ -3008,22 +3045,23 @@ function SnapshotTable({
   onStartChange?: (snapshot: ConfigSnapshot) => void;
   onRollbackSuccess?: () => void;
 }) {
+  const t = useT();
   const [rollbackTarget, setRollbackTarget] = useState<ConfigSnapshot | null>(null);
 
   return (
-    <InfoPanel icon={<FileClock />} title="Snapshots" collapsible contentClassName="max-h-[42dvh] overflow-auto pr-1">
+    <InfoPanel icon={<FileClock />} title={t("snapshot.title")} collapsible contentClassName="max-h-[42dvh] overflow-auto pr-1">
       {snapshots.length === 0 ? (
-        <EmptyState icon={<Database className="h-6 w-6" />} title="No snapshots collected" />
+        <EmptyState icon={<Database className="h-6 w-6" />} title={t("snapshot.empty")} />
       ) : (
         <>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[680px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-warm text-left font-mono text-[11px] uppercase text-muted">
-                  <th className="py-2 pr-3 font-medium">Datastore</th>
-                  <th className="py-2 pr-3 font-medium">Collected</th>
-                  <th className="py-2 pr-3 font-medium">Digest</th>
-                  <th className="py-2 font-medium">Diff</th>
+                  <th className="py-2 pr-3 font-medium">{t("common.datastore")}</th>
+                  <th className="py-2 pr-3 font-medium">{t("snapshot.collected")}</th>
+                  <th className="py-2 pr-3 font-medium">{t("rollback.digest")}</th>
+                  <th className="py-2 font-medium">{t("snapshot.diff")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -3034,14 +3072,14 @@ function SnapshotTable({
                     <td className="py-3 pr-3 font-mono text-xs">{digestShort(s.content_digest)}</td>
                     <td className="py-3 text-muted">
                       <div className="flex items-center justify-between gap-2">
-                        <span>{diffLabel(s.diff_summary)}</span>
+                        <span>{diffLabel(t, s.diff_summary)}</span>
                         <div className="flex gap-1.5">
                           {canSubmitChange && onStartChange ? (
                             <Button
                               onClick={() => onStartChange(s)}
                               className="h-8 px-2 text-xs"
                             >
-                              <Send className="h-3.5 w-3.5" /> Change
+                              <Send className="h-3.5 w-3.5" /> {t("snapshot.change")}
                             </Button>
                           ) : null}
                           {canApprove ? (
@@ -3049,17 +3087,17 @@ function SnapshotTable({
                               <Button
                                 onClick={() => setRollbackTarget(s)}
                                 className="h-8 px-2 text-xs bg-paper border border-warm text-ink"
-                                title="Restore to this snapshot"
+                                title={t("snapshot.restoreToThis")}
                               >
-                                <ListRestart className="h-3.5 w-3.5" /> Restore
+                                <ListRestart className="h-3.5 w-3.5" /> {t("snapshot.restore")}
                               </Button>
                             ) : (
                               <button
                                 disabled
-                                title={`Not restorable: ${s.rollback_blocker ?? "unknown"}`}
+                                title={t("snapshot.notRestorable", { reason: s.rollback_blocker ?? t("common.unknown") })}
                                 className="h-8 px-2 text-xs opacity-40 cursor-not-allowed flex items-center gap-1 rounded border border-warm"
                               >
-                                <ListRestart className="h-3.5 w-3.5" /> Restore
+                                <ListRestart className="h-3.5 w-3.5" /> {t("snapshot.restore")}
                               </button>
                             )
                           ) : null}
@@ -3091,22 +3129,23 @@ function SnapshotTable({
 function ReadOnlyPanel({
   profile, lastTask, configTaskRunning
 }: { profile: DeviceProfile | null; lastTask: TaskRead | null; configTaskRunning: boolean }) {
+  const t = useT();
   return (
-    <InfoPanel icon={<ShieldCheck />} title="Boundary" collapsible contentClassName="max-h-[30dvh] overflow-auto pr-1">
+    <InfoPanel icon={<ShieldCheck />} title={t("boundary.title")} collapsible contentClassName="max-h-[30dvh] overflow-auto pr-1">
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
-          <Metric label="Full config" value={String(profile?.safety_summary.exposes_full_config ?? false)} />
-          <Metric label="Credentials" value={String(profile?.safety_summary.exposes_credentials ?? false)} />
+          <Metric label={t("boundary.fullConfig")} value={String(profile?.safety_summary.exposes_full_config ?? false)} />
+          <Metric label={t("boundary.credentials")} value={String(profile?.safety_summary.exposes_credentials ?? false)} />
         </div>
         {configTaskRunning ? (
           <div className="rounded border border-info/20 bg-info/10 p-3 text-sm text-info">
-            Collection task in progress
+            {t("boundary.collectionInProgress")}
           </div>
         ) : null}
         {lastTask ? (
           <div className="rounded border border-warm bg-paper p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <FieldLabel>Last submitted</FieldLabel>
+              <FieldLabel>{t("boundary.lastSubmitted")}</FieldLabel>
               <StatusBadge status={lastTask.status} />
             </div>
             <p className="break-all font-mono text-xs text-muted">{lastTask.task_id}</p>
@@ -3118,10 +3157,11 @@ function ReadOnlyPanel({
 }
 
 function RecentTasks({ tasks }: { tasks: DeviceProfile["recent_tasks"] }) {
+  const t = useT();
   return (
-    <InfoPanel icon={<ListRestart />} title="Recent Tasks" collapsible contentClassName="max-h-[42dvh] overflow-auto pr-1">
+    <InfoPanel icon={<ListRestart />} title={t("recentTasks.title")} collapsible contentClassName="max-h-[42dvh] overflow-auto pr-1">
       {tasks.length === 0 ? (
-        <EmptyState icon={<ListRestart className="h-6 w-6" />} title="No recent tasks" />
+        <EmptyState icon={<ListRestart className="h-6 w-6" />} title={t("recentTasks.empty")} />
       ) : (
         <div className="space-y-2">
           {tasks.map((task) => (
@@ -3163,8 +3203,8 @@ function InfoPanel({ icon, title, children, collapsible = false, defaultOpen = t
         {collapsible ? (
           <button
             type="button"
-            aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
-            title={open ? `Collapse ${title}` : `Expand ${title}`}
+            aria-label={title}
+            title={title}
             onClick={() => setOpen((value) => !value)}
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted transition hover:bg-paper hover:text-ink"
           >
@@ -3201,43 +3241,50 @@ function DeviceListSkeleton() {
 }
 
 function ErrorPanel({ message, onRetry }: { message: string | null; onRetry: () => void }) {
+  const t = useT();
   return (
     <div className="rounded border border-error/25 bg-error/10 p-4 text-error">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 gap-2">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <p className="break-words text-sm">{message ?? "Request failed"}</p>
+          <p className="break-words text-sm">{message ?? t("common.requestFailed")}</p>
         </div>
-        <Button onClick={onRetry} className="h-8 bg-paper text-error">Retry</Button>
+        <Button onClick={onRetry} className="h-8 bg-paper text-error">{t("common.retry")}</Button>
       </div>
     </div>
   );
 }
 
-function summaryValue(summary: Record<string, unknown> | undefined) {
+function summaryValue(t: TranslateFn, summary: Record<string, unknown> | undefined) {
   if (!summary) return "-";
-  if (typeof summary.capability_count === "number") return `${summary.capability_count} caps`;
-  return "ready";
+  if (typeof summary.capability_count === "number") {
+    return t("device.capCount", { count: summary.capability_count });
+  }
+  return t("device.discoverySummaryReady");
 }
 
-function onboardingSteps(summary: Device["onboarding_summary"]) {
+function onboardingSteps(t: TranslateFn, summary: Device["onboarding_summary"]) {
   if (!summary) return "-";
   return [
-    `C ${compactStatus(summary.connection.status)}`,
-    `D ${compactStatus(summary.discovery.status)}`,
-    `B ${compactStatus(summary.baseline.status)}`
+    `${t("onboarding.connectionLetter")} ${compactStatus(t, summary.connection.status)}`,
+    `${t("onboarding.discoveryLetter")} ${compactStatus(t, summary.discovery.status)}`,
+    `${t("onboarding.baselineLetter")} ${compactStatus(t, summary.baseline.status)}`
   ].join(" · ");
 }
 
-function onboardingDetail(summary: Device["onboarding_summary"]) {
-  if (!summary) return "Profile unavailable";
+function onboardingDetail(t: TranslateFn, summary: Device["onboarding_summary"]) {
+  if (!summary) return t("onboarding.profileUnavailable");
   if (summary.blockers.length > 0) return summary.blockers.join(", ");
   if (summary.next_action) return summary.next_action.replaceAll("_", " ");
-  return summary.ready_for_change ? "Ready for change" : "Waiting for onboarding";
+  return summary.ready_for_change
+    ? t("onboarding.readyForChange")
+    : t("onboarding.waitingForOnboarding");
 }
 
-function compactStatus(status: string) {
-  return status.replaceAll("_", " ");
+function compactStatus(t: TranslateFn, status: string) {
+  const key = `status.${status}`;
+  const translated = t(key);
+  return translated === key ? status.replaceAll("_", " ") : translated;
 }
 
 function digestShort(digest: string | undefined) {
@@ -3245,9 +3292,9 @@ function digestShort(digest: string | undefined) {
   return digest.replace("sha256:", "").slice(0, 12);
 }
 
-function diffLabel(diff: Record<string, unknown>) {
-  if (diff.previous_snapshot_id === null) return "first snapshot";
-  return diff.changed ? "changed" : "unchanged";
+function diffLabel(t: TranslateFn, diff: Record<string, unknown>) {
+  if (diff.previous_snapshot_id === null) return t("snapshot.firstSnapshot");
+  return diff.changed ? t("snapshot.changed") : t("snapshot.unchanged");
 }
 
 function formatDate(value: string) {
@@ -3256,6 +3303,6 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function errorMessage(caught: unknown) {
-  return formatApiError(caught);
+function errorMessage(caught: unknown, t?: TranslateFn) {
+  return formatApiError(caught, t);
 }

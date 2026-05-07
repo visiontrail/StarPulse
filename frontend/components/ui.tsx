@@ -1,7 +1,10 @@
+"use client";
+
 import * as Select from "@radix-ui/react-select";
 import { Check, ChevronDown, Loader2 } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
+import { localizeStatus, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export function Button({
@@ -25,6 +28,7 @@ export function Button({
 }
 
 export function StatusBadge({ status }: { status: string }) {
+  const t = useT();
   const tone =
     status === "succeeded" || status === "online" || status === "ready" || status === "passed"
       ? "border-ok/25 bg-ok/10 text-ok"
@@ -44,7 +48,7 @@ export function StatusBadge({ status }: { status: string }) {
         tone
       )}
     >
-      {status}
+      {localizeStatus(t, status)}
     </span>
   );
 }

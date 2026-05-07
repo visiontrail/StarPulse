@@ -3,6 +3,7 @@
 import { LogIn, LogOut, User } from "lucide-react";
 import { useState } from "react";
 
+import { useT } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
 import { BrandMark } from "@/components/brand";
 import { Button } from "@/components/ui";
@@ -10,6 +11,7 @@ import { Button } from "@/components/ui";
 // ── Login View ─────────────────────────────────────────────────────────────
 
 export function LoginView() {
+  const t = useT();
   const { login } = useSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -23,7 +25,7 @@ export function LoginView() {
     try {
       await login(username, password);
     } catch {
-      setError("Invalid credentials");
+      setError(t("auth.invalid"));
     } finally {
       setLoading(false);
     }
@@ -35,15 +37,15 @@ export function LoginView() {
         <div className="mb-6 flex items-center gap-3">
           <BrandMark className="h-10 w-10" />
           <div>
-            <p className="font-mono text-[11px] uppercase text-muted">Star Pulse</p>
-            <h1 className="text-lg font-semibold">Sign in</h1>
+            <p className="font-mono text-[11px] uppercase text-muted">{t("app.brand")}</p>
+            <h1 className="text-lg font-semibold">{t("auth.signIn")}</h1>
           </div>
         </div>
 
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
           <div>
             <label className="mb-1 block font-mono text-[11px] uppercase text-muted">
-              Username
+              {t("auth.username")}
             </label>
             <input
               type="text"
@@ -56,7 +58,7 @@ export function LoginView() {
           </div>
           <div>
             <label className="mb-1 block font-mono text-[11px] uppercase text-muted">
-              Password
+              {t("auth.password")}
             </label>
             <input
               type="password"
@@ -72,7 +74,7 @@ export function LoginView() {
           ) : null}
           <Button type="submit" busy={loading} className="w-full justify-center">
             <LogIn className="h-4 w-4" aria-hidden="true" />
-            Sign in
+            {t("auth.signIn")}
           </Button>
         </form>
       </div>
@@ -83,6 +85,7 @@ export function LoginView() {
 // ── Session Header ─────────────────────────────────────────────────────────
 
 export function SessionHeader() {
+  const t = useT();
   const { user, logout } = useSession();
   const [busy, setBusy] = useState(false);
 
@@ -103,18 +106,18 @@ export function SessionHeader() {
         <User className="h-3.5 w-3.5" aria-hidden="true" />
         <span className="font-medium text-ink">{user.display_name}</span>
         <span className="hidden sm:inline">
-          ({user.roles.join(", ") || "no role"})
+          ({user.roles.join(", ") || t("auth.noRole")})
         </span>
       </div>
       <Button
         onClick={() => void handleLogout()}
         busy={busy}
         className="h-8 px-2 text-xs"
-        title="Sign out"
-        aria-label="Sign out"
+        title={t("auth.signOut")}
+        aria-label={t("auth.signOut")}
       >
         <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-        <span className="hidden sm:inline">Sign out</span>
+        <span className="hidden sm:inline">{t("auth.signOut")}</span>
       </Button>
     </div>
   );
