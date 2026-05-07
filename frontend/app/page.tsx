@@ -1482,6 +1482,27 @@ function ConfigModelWorkspace({
   onOpenChange: (target: ConfigChangeTarget) => void;
 }) {
   const t = useT();
+  const [treeOpenPaths, setTreeOpenPaths] = useState<Set<string>>(() => new Set(["root", "root.data"]));
+
+  function treeExpandAll() {
+    const paths = new Set<string>();
+    collectObjectPaths(data, "root", paths);
+    setTreeOpenPaths(paths);
+  }
+
+  function treeCollapseAll() {
+    setTreeOpenPaths(new Set(["root"]));
+  }
+
+  function treeToggle(path: string) {
+    setTreeOpenPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
   const selectedValue = getTreeValueAtPath(data, selectedPath);
   const effectivePath = isObjectLike(selectedValue) ? selectedPath : "root";
   const effectiveValue = isObjectLike(selectedValue) ? selectedValue : data;
@@ -1495,72 +1516,102 @@ function ConfigModelWorkspace({
     [data, effectivePath, effectiveValue, schemaIndex]
   );
   const hasYangModel = schemaIndex.byPath.size + schemaIndex.byNamespacePath.size > 0;
+  const allLeafRows = useMemo(
+    () => (isMultiInstance ? leafRows : collectAllLeafRows(effectiveValue, effectivePath, data, schemaIndex)),
+    [data, effectivePath, effectiveValue, schemaIndex, isMultiInstance, leafRows]
+  );
+  const schemaLeafCount = useMemo(() => {
+    const normEffPath = normalizeUiPath(effectivePath);
+    if (!normEffPath) return 0;
+    let count = 0;
+    for (const [schemaPath, node] of schemaIndex.byPath) {
+      const kind = (node.kind ?? node.node_type ?? "").toLowerCase();
+      if (kind && kind !== "leaf" && kind !== "leaf-list") continue;
+      if (schemaPath.startsWith(normEffPath + ".")) count++;
+    }
+    return count;
+  }, [effectivePath, schemaIndex]);
 
   return (
     <div className="grid min-h-[520px] gap-3 xl:grid-cols-[minmax(260px,0.34fr)_minmax(0,1fr)]">
-      <InfoPanel icon={<Settings2 />} title={t("workspace.configTree")}>
+      <InfoPanel
+        icon={<Settings2 />}
+        title={t("workspace.configTree")}
+        headerActions={
+          <div className="flex gap-0.5">
+            <button
+              type="button"
+              onClick={treeExpandAll}
+              title={t("common.expandAll")}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base font-semibold text-muted transition hover:bg-paper hover:text-ink"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={treeCollapseAll}
+              title={t("common.collapseAll")}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-base font-semibold text-muted transition hover:bg-paper hover:text-ink"
+            >
+              −
+            </button>
+          </div>
+        }
+      >
         <ParentObjectTree
           data={data}
           selectedPath={effectivePath}
+          openPaths={treeOpenPaths}
+          onToggle={treeToggle}
           onSelectPath={onSelectPath}
         />
       </InfoPanel>
 
-      <InfoPanel icon={<FilePenLine />} title="叶子节点表格">
-        <div className="min-h-0 space-y-3">
-          <div className="flex flex-col gap-2 border-b border-warm pb-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <p className="truncate font-mono text-[11px] text-muted">{effectivePath}</p>
-              <p className="mt-1 text-xs text-muted">
-                {isMultiInstance ? "多实例列表" : t("tree.childrenCount", { count: leafRows.length })}
-                {" · "}
-                {hasYangModel ? "已关联 YANG 模型" : "未发现 YANG 模型元数据"}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              {isMultiInstance ? (
-                <Button
-                  className="h-8 px-2 text-xs"
-                  onClick={() =>
-                    onOpenChange({
-                      action: "add-instance",
-                      path: `${effectivePath}.*`,
-                      label: "新增实例",
-                      currentValue: {},
-                      schema: matchYangNode(schemaIndex, `${effectivePath}.*`, data)
-                    })
-                  }
-                >
-                  <Plus className="h-3.5 w-3.5" aria-hidden />
-                  新增实例
-                </Button>
-              ) : (
-                <Button
-                  className="h-8 px-2 text-xs"
-                  onClick={() =>
-                    onOpenChange({
-                      action: "add-leaf",
-                      path: `${effectivePath}.new_leaf`,
-                      label: "新增叶子",
-                      currentValue: "",
-                      schema: null
-                    })
-                  }
-                >
-                  <Plus className="h-3.5 w-3.5" aria-hidden />
-                  新增叶子
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {isMultiInstance && listTable ? (
-            <ListInstanceTable table={listTable} onOpenChange={onOpenChange} />
-          ) : (
-            <LeafDetailTable leafRows={leafRows} onOpenChange={onOpenChange} />
-          )}
+      <section className="flex min-h-0 flex-col rounded border border-warm bg-surface/70 p-4">
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="text-accent"><FilePenLine className="h-4 w-4" aria-hidden /></span>
+          <h3 className="shrink-0 text-sm font-semibold">叶子节点表格</h3>
+          <span className="select-none text-warm-strong">·</span>
+          <p className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted" title={effectivePath}>{effectivePath}</p>
+          <span className="shrink-0 font-mono text-[11px] text-muted">
+            {isMultiInstance ? "多实例列表" : `${leafRows.length} 个配置节点`}
+          </span>
+          {schemaLeafCount > 0 ? (
+            <span className="shrink-0 rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] text-muted">
+              Schema {schemaLeafCount}
+            </span>
+          ) : null}
+          <span className={cn("inline-flex shrink-0 items-center gap-1 font-mono text-[11px]", hasYangModel ? "text-accent" : "text-muted")}>
+            {hasYangModel
+              ? <CheckCircle className="h-3 w-3" aria-hidden />
+              : <XCircle className="h-3 w-3" aria-hidden />}
+            {hasYangModel ? "已关联" : "未关联"}
+          </span>
+          {isMultiInstance ? (
+            <Button
+              className="h-7 px-2 text-xs"
+              onClick={() =>
+                onOpenChange({
+                  action: "add-instance",
+                  path: `${effectivePath}.*`,
+                  label: "新增实例",
+                  currentValue: {},
+                  schema: matchYangNode(schemaIndex, `${effectivePath}.*`, data)
+                })
+              }
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden />
+              新增实例
+            </Button>
+          ) : null}
         </div>
-      </InfoPanel>
+
+        {isMultiInstance && listTable ? (
+          <ListInstanceTable table={listTable} onOpenChange={onOpenChange} />
+        ) : (
+          <LeafDetailTable leafRows={allLeafRows} onOpenChange={onOpenChange} />
+        )}
+      </section>
     </div>
   );
 }
@@ -1689,88 +1740,98 @@ function LeafDetailTable({
           </tr>
         </thead>
         <tbody>
-          {leafRows.map((row) => (
-            <tr key={row.path} className="border-b border-warm/70 last:border-0 hover:bg-canvas/70">
-              <td className="max-w-[280px] px-3 py-2">
-                <p className="truncate font-medium text-ink" title={row.relativePath}>
-                  {row.relativePath}
-                </p>
-                <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={row.path}>
-                  {row.path}
-                </p>
-              </td>
-              <td className="px-3 py-2 font-mono text-[11px] text-muted">
-                {row.instanceLabel ?? "-"}
-              </td>
-              <td className="px-3 py-2">
-                <div className="max-w-[220px]">
-                  <p className="truncate font-mono text-[11px] text-ink" title={yangModuleLabel(row.schema)}>
-                    {yangModuleLabel(row.schema)}
+          {leafRows.map((row) => {
+            const isSchemaOnly = row.value === undefined;
+            return (
+              <tr key={row.path} className={cn("border-b border-warm/70 last:border-0 hover:bg-canvas/70", isSchemaOnly && "opacity-60")}>
+                <td className="max-w-[280px] px-3 py-2">
+                  <div className="flex items-center gap-1.5">
+                    <p className="truncate font-medium text-ink" title={row.relativePath}>
+                      {row.relativePath}
+                    </p>
+                    {isSchemaOnly ? (
+                      <span className="shrink-0 rounded border border-warm bg-canvas px-1 font-mono text-[9px] text-muted">未配置</span>
+                    ) : null}
+                  </div>
+                  <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={row.path}>
+                    {row.path}
                   </p>
-                  <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={row.schema?.namespace ?? row.namespace ?? ""}>
-                    {row.schema?.kind ?? row.schema?.node_type ?? "leaf"}
-                  </p>
-                </div>
-              </td>
-              <td className="px-3 py-2">
-                <div className="flex max-w-[260px] flex-wrap gap-1.5">
-                  <span className="rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] uppercase text-muted">
-                    {displayYangType(row.schema, row.value)}
-                  </span>
-                  {yangConstraintBadges(row.schema).map((badge) => (
-                    <span
-                      key={badge}
-                      className="rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] text-muted"
-                      title={badge}
-                    >
-                      {badge}
+                </td>
+                <td className="px-3 py-2 font-mono text-[11px] text-muted">
+                  {row.instanceLabel ?? "-"}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="max-w-[220px]">
+                    <p className="truncate font-mono text-[11px] text-ink" title={yangModuleLabel(row.schema)}>
+                      {yangModuleLabel(row.schema)}
+                    </p>
+                    <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={row.schema?.namespace ?? row.namespace ?? ""}>
+                      {row.schema?.kind ?? row.schema?.node_type ?? "leaf"}
+                    </p>
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex max-w-[260px] flex-wrap gap-1.5">
+                    <span className="rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] uppercase text-muted">
+                      {displayYangType(row.schema, row.value)}
                     </span>
-                  ))}
-                </div>
-              </td>
-              <td className="max-w-[360px] px-3 py-2">
-                <p className="truncate font-mono text-[11px] text-muted" title={formatTreeValue(row.value)}>
-                  {formatTreeValue(row.value) || "-"}
-                </p>
-              </td>
-              <td className="px-3 py-2">
-                <div className="flex justify-end gap-1.5">
-                  <Button
-                    aria-label="修改叶子节点"
-                    title="修改叶子节点"
-                    className="h-8 w-8 bg-canvas px-0"
-                    onClick={() =>
-                      onOpenChange({
-                        action: "edit-leaf",
-                        path: row.path,
-                        label: row.relativePath,
-                        currentValue: row.value,
-                        schema: row.schema ?? null
-                      })
-                    }
-                  >
-                    <FilePenLine className="h-3.5 w-3.5" aria-hidden />
-                  </Button>
-                  <Button
-                    aria-label="删除叶子节点"
-                    title="删除叶子节点"
-                    className="h-8 w-8 bg-canvas px-0 text-error"
-                    onClick={() =>
-                      onOpenChange({
-                        action: "delete-leaf",
-                        path: row.path,
-                        label: row.relativePath,
-                        currentValue: row.value,
-                        schema: row.schema ?? null
-                      })
-                    }
-                  >
-                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                  </Button>
-                </div>
-              </td>
-            </tr>
-          ))}
+                    {yangConstraintBadges(row.schema).map((badge) => (
+                      <span
+                        key={badge}
+                        className="rounded border border-warm bg-canvas px-1.5 font-mono text-[10px] text-muted"
+                        title={badge}
+                      >
+                        {badge}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td className="max-w-[360px] px-3 py-2">
+                  <p className="truncate font-mono text-[11px] text-muted" title={formatTreeValue(row.value)}>
+                    {formatTreeValue(row.value) || "-"}
+                  </p>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      aria-label={isSchemaOnly ? "设置叶子节点" : "修改叶子节点"}
+                      title={isSchemaOnly ? "设置叶子节点" : "修改叶子节点"}
+                      className="h-8 w-8 bg-canvas px-0"
+                      onClick={() =>
+                        onOpenChange({
+                          action: "edit-leaf",
+                          path: row.path,
+                          label: row.relativePath,
+                          currentValue: row.value,
+                          schema: row.schema ?? null
+                        })
+                      }
+                    >
+                      <FilePenLine className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                    {!isSchemaOnly ? (
+                      <Button
+                        aria-label="删除叶子节点"
+                        title="删除叶子节点"
+                        className="h-8 w-8 bg-canvas px-0 text-error"
+                        onClick={() =>
+                          onOpenChange({
+                            action: "delete-leaf",
+                            path: row.path,
+                            label: row.relativePath,
+                            currentValue: row.value,
+                            schema: row.schema ?? null
+                          })
+                        }
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      </Button>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
           {leafRows.length === 0 ? (
             <tr>
               <td colSpan={6} className="px-3 py-10">
@@ -1787,61 +1848,28 @@ function LeafDetailTable({
 function ParentObjectTree({
   data,
   selectedPath,
+  openPaths,
+  onToggle,
   onSelectPath
 }: {
   data: unknown;
   selectedPath: string;
+  openPaths: Set<string>;
+  onToggle: (path: string) => void;
   onSelectPath: (path: string) => void;
 }) {
-  const t = useT();
-  const [openPaths, setOpenPaths] = useState<Set<string>>(
-    () => new Set(["root", "root.data"])
-  );
-
-  function toggle(path: string) {
-    setOpenPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }
-
-  function expandAll() {
-    const paths = new Set<string>();
-    collectObjectPaths(data, "root", paths);
-    setOpenPaths(paths);
-  }
-
-  function collapseAll() {
-    setOpenPaths(new Set(["root"]));
-  }
-
   return (
-    <div className="min-h-0">
-      <div className="mb-3 flex items-center justify-between gap-2 border-b border-warm pb-3">
-        <p className="min-w-0 truncate font-mono text-[11px] text-muted">{selectedPath}</p>
-        <div className="flex shrink-0 gap-1.5">
-          <Button aria-label={t("common.expandAll")} title={t("common.expandAll")} onClick={expandAll} className="h-8 w-8 bg-paper px-0">
-            <ChevronsRight className="h-3.5 w-3.5" aria-hidden />
-          </Button>
-          <Button aria-label={t("common.collapseAll")} title={t("common.collapseAll")} onClick={collapseAll} className="h-8 w-8 bg-paper px-0">
-            <ChevronsLeft className="h-3.5 w-3.5" aria-hidden />
-          </Button>
-        </div>
-      </div>
-      <div className="max-h-[64dvh] overflow-auto rounded border border-warm bg-paper/70 p-2">
-        <ParentTreeRows
-          label="root"
-          value={data}
-          path="root"
-          depth={0}
-          openPaths={openPaths}
-          selectedPath={selectedPath}
-          onToggle={toggle}
-          onSelectPath={onSelectPath}
-        />
-      </div>
+    <div className="max-h-[64dvh] overflow-auto rounded border border-warm bg-paper/70 p-2">
+      <ParentTreeRows
+        label="root"
+        value={data}
+        path="root"
+        depth={0}
+        openPaths={openPaths}
+        selectedPath={selectedPath}
+        onToggle={onToggle}
+        onSelectPath={onSelectPath}
+      />
     </div>
   );
 }
@@ -3086,6 +3114,46 @@ function collectLeafRows(
 
   walk(value, basePath);
   return rows;
+}
+
+function collectAllLeafRows(
+  value: unknown,
+  basePath: string,
+  root: unknown,
+  schemaIndex: YangSchemaIndex
+): ConfigLeafRow[] {
+  const configRows = collectLeafRows(value, basePath, root, schemaIndex);
+  const normBasePath = normalizeUiPath(basePath);
+  if (!normBasePath) return configRows;
+
+  const existingNormPaths = new Set(configRows.map((row) => normalizeUiPath(row.path)));
+  const schemaOnlyRows: ConfigLeafRow[] = [];
+
+  for (const [schemaPath, node] of schemaIndex.byPath) {
+    const kind = (node.kind ?? node.node_type ?? "").toLowerCase();
+    if (kind && kind !== "leaf" && kind !== "leaf-list") continue;
+    if (node.config === false) continue;
+    if (!schemaPath.startsWith(normBasePath + ".")) continue;
+    if (existingNormPaths.has(schemaPath)) continue;
+
+    const relPath = schemaPath.slice(normBasePath.length + 1);
+    const stubPath = `${basePath}.${relPath}`;
+    if (existingNormPaths.has(normalizeUiPath(stubPath))) continue;
+
+    const label = relPath.split(".").pop() ?? relPath;
+    schemaOnlyRows.push({
+      path: stubPath,
+      label,
+      relativePath: relPath,
+      value: undefined,
+      valueType: displayYangType(node, undefined),
+      instanceLabel: undefined,
+      namespace: node.namespace ?? null,
+      schema: node
+    });
+  }
+
+  return [...configRows, ...schemaOnlyRows];
 }
 
 function isInternalTreeMetadataPath(path: string, basePath: string): boolean {
@@ -4852,7 +4920,7 @@ function RecentTasks({ tasks }: { tasks: DeviceProfile["recent_tasks"] }) {
   );
 }
 
-function InfoPanel({ icon, title, children, collapsible = false, defaultOpen = true, className, contentClassName }: {
+function InfoPanel({ icon, title, children, collapsible = false, defaultOpen = true, className, contentClassName, headerActions }: {
   icon: React.ReactNode;
   title: string;
   children: React.ReactNode;
@@ -4860,6 +4928,7 @@ function InfoPanel({ icon, title, children, collapsible = false, defaultOpen = t
   defaultOpen?: boolean;
   className?: string;
   contentClassName?: string;
+  headerActions?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -4868,6 +4937,7 @@ function InfoPanel({ icon, title, children, collapsible = false, defaultOpen = t
       <div className={cn("flex items-center gap-2", open && "mb-4")}>
         <span className="text-accent [&_svg]:h-4 [&_svg]:w-4">{icon}</span>
         <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</h3>
+        {headerActions}
         {collapsible ? (
           <button
             type="button"
