@@ -1900,7 +1900,7 @@ function ParentObjectTree({
   onSelectPath: (path: string) => void;
 }) {
   return (
-    <div className="max-h-[64dvh] overflow-x-hidden overflow-y-auto rounded border border-warm bg-paper/70 p-2">
+    <div className="overflow-x-hidden rounded border border-warm bg-paper/70 p-2">
       <ParentTreeRows
         label="root"
         value={data}
