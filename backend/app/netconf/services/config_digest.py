@@ -12,7 +12,8 @@ def normalize_config_content(content: str) -> str:
         root = ElementTree.fromstring(text)
     except ElementTree.ParseError:
         return "\n".join(line.strip() for line in text.splitlines() if line.strip())
-    return _normalize_element(root)
+    _strip_whitespace(root)
+    return ElementTree.tostring(root, encoding="unicode")
 
 
 def config_digest(content: str) -> str:
@@ -20,9 +21,8 @@ def config_digest(content: str) -> str:
     return f"sha256:{sha256(normalized.encode('utf-8')).hexdigest()}"
 
 
-def _normalize_element(element: ElementTree.Element) -> str:
-    attrs = "".join(f' {key}="{value}"' for key, value in sorted(element.attrib.items()))
-    text = (element.text or "").strip()
-    children = "".join(_normalize_element(child) for child in list(element))
-    tail = (element.tail or "").strip()
-    return f"<{element.tag}{attrs}>{text}{children}</{element.tag}>{tail}"
+def _strip_whitespace(element: ElementTree.Element) -> None:
+    element.text = (element.text or "").strip() or None
+    element.tail = (element.tail or "").strip() or None
+    for child in element:
+        _strip_whitespace(child)

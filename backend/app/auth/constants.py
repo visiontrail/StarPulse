@@ -114,6 +114,7 @@ class AuditAction:
     DEVICE_ONBOARDING_STEP_QUEUED = "device.onboarding.step.queued"
     DEVICE_ONBOARDING_STEP_SUCCESS = "device.onboarding.step.success"
     DEVICE_ONBOARDING_STEP_FAILURE = "device.onboarding.step.failure"
+    DEVICE_DELETED = "device.deleted"
 
     PERMISSION_DENIED = "authz.permission_denied"
     VALIDATION_FAILED = "op.validation_failed"

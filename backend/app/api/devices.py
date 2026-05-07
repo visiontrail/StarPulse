@@ -118,6 +118,37 @@ def get_device_profile(device_id: int, session: SessionDep) -> DeviceProfileRead
     )
 
 
+@router.delete(
+    "/{device_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[require_permission(PERM_DEVICE_MANAGE)],
+)
+def delete_device(
+    device_id: int,
+    request: Request,
+    session: SessionDep,
+    actor: CurrentUserDep,
+) -> None:
+    device = DeviceService(session).get_device(device_id)
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+    device_name = device.name
+    DeviceService(session).delete_device(device_id)
+    write_audit_event(
+        session=session,
+        action=AuditAction.DEVICE_DELETED,
+        outcome=AuditOutcome.SUCCESS,
+        actor_user_id=actor.id,
+        target_type="device",
+        target_id=str(device_id),
+        permission=PERM_DEVICE_MANAGE,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        metadata={"device_id": device_id, "name": device_name},
+    )
+    session.commit()
+
+
 @router.post(
     "/{device_id}/connection-test",
     response_model=TaskRead,

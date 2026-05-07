@@ -292,6 +292,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ datastore })
     }),
+  deleteDevice: (deviceId: number) =>
+    request<void>(`/devices/${deviceId}`, { method: "DELETE" }),
   abandonStaleTasks: (deviceId: number) =>
     request<{ abandoned: number }>(`/devices/${deviceId}/tasks/stale`, { method: "DELETE" }),
 

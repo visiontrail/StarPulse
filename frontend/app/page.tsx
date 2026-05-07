@@ -12,6 +12,7 @@ import {
   FileClock,
   FilePenLine,
   Gauge,
+  GripVertical,
   HardDrive,
   KeyRound,
   ListRestart,
@@ -19,6 +20,8 @@ import {
   Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RefreshCw,
   Router,
@@ -27,11 +30,13 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Users,
   XCircle
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { BrandMark } from "@/components/brand";
 import { LoginView, SessionHeader } from "@/components/auth";
 import { Button, DatastoreSelect, EmptyState, FieldLabel, StatusBadge } from "@/components/ui";
 import { api, formatApiError, formatRollbackBlocker } from "@/lib/api";
@@ -57,6 +62,11 @@ type LoadState = "idle" | "loading" | "loaded" | "error";
 type Tab = "devices" | "changes" | "admin" | "audit";
 type DeviceListMode = "collapsed" | "compact" | "expanded";
 type DeviceDetailMode = "operational" | "config";
+type RefreshOptions = { silent?: boolean };
+
+const REALTIME_FAST_REFRESH_MS = 1500;
+const REALTIME_NORMAL_REFRESH_MS = 4000;
+const REALTIME_SLOW_REFRESH_MS = 8000;
 
 export default function OperationsConsole() {
   const { state } = useSession();
@@ -104,7 +114,8 @@ function AuthenticatedConsole() {
       {/* App bar */}
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-warm bg-canvas/95 px-4">
         <div className="flex items-center gap-4">
-          <div>
+          <div className="flex items-center gap-2.5">
+            <BrandMark className="h-8 w-8" />
             <p className="font-mono text-[11px] uppercase text-muted">Star Pulse</p>
           </div>
           <nav className="flex gap-1">
@@ -154,6 +165,8 @@ function AuthenticatedConsole() {
 
 function DevicesTab() {
   const { hasPermission } = useSession();
+  const layoutRef = useRef<HTMLDivElement | null>(null);
+  const selectedDeviceIdRef = useRef<number | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | null>(null);
   const [profile, setProfile] = useState<DeviceProfile | null>(null);
@@ -162,6 +175,10 @@ function DevicesTab() {
   const [lastTask, setLastTask] = useState<TaskRead | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [listMode, setListMode] = useState<DeviceListMode>("compact");
+  const [leftWidth, setLeftWidth] = useState(320);
+  const [rightWidth, setRightWidth] = useState(320);
+  const [statusCollapsed, setStatusCollapsed] = useState(false);
+  const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false);
   const [detailMode, setDetailMode] = useState<DeviceDetailMode>("operational");
   const [deviceQuery, setDeviceQuery] = useState("");
   const [selectedObjectPath, setSelectedObjectPath] = useState("root");
@@ -200,23 +217,35 @@ function DevicesTab() {
     });
   }, [deviceQuery, devices]);
 
-  const loadDevices = useCallback(async () => {
-    setDevicesState("loading");
-    setError(null);
+  useEffect(() => {
+    selectedDeviceIdRef.current = selectedDeviceId;
+  }, [selectedDeviceId]);
+
+  const loadDevices = useCallback(async (options: RefreshOptions = {}) => {
+    if (!options.silent) {
+      setDevicesState("loading");
+      setError(null);
+    }
     try {
       const items = await api.listDevices();
       setDevices(items);
-      setSelectedDeviceId((cur) => cur ?? items[0]?.id ?? null);
+      setSelectedDeviceId((cur) =>
+        cur !== null && items.some((item) => item.id === cur) ? cur : items[0]?.id ?? null
+      );
       setDevicesState("loaded");
     } catch (e) {
-      setDevicesState("error");
-      setError(errorMessage(e));
+      if (!options.silent) {
+        setDevicesState("error");
+        setError(errorMessage(e));
+      }
     }
   }, []);
 
-  const loadProfile = useCallback(async (deviceId: number) => {
-    setProfileState("loading");
-    setError(null);
+  const loadProfile = useCallback(async (deviceId: number, options: RefreshOptions = {}) => {
+    if (!options.silent) {
+      setProfileState("loading");
+      setError(null);
+    }
     try {
       const [prof, snap]: [DeviceProfile, SnapshotListResponse] = await Promise.all([
         api.getProfile(deviceId),
@@ -225,12 +254,15 @@ function DevicesTab() {
       const latestSnapshot = snap.items[0]
         ? await api.getSnapshot(deviceId, snap.items[0].id)
         : null;
+      if (selectedDeviceIdRef.current !== deviceId) return;
       setProfile(prof);
       setSnapshots(latestSnapshot ? [latestSnapshot, ...snap.items.slice(1)] : snap.items);
       setProfileState("loaded");
     } catch (e) {
-      setProfileState("error");
-      setError(errorMessage(e));
+      if (!options.silent) {
+        setProfileState("error");
+        setError(errorMessage(e));
+      }
     }
   }, []);
 
@@ -270,11 +302,86 @@ function DevicesTab() {
   const configTaskRunning = profile?.recent_tasks.some(
     (t) => t.task_type === "device.config_snapshot" && (t.status === "queued" || t.status === "running")
   );
+  const realtimeTaskActive = Boolean(
+    profile?.recent_tasks.some((task) => isRealtimeActiveStatus(task.status)) ||
+      (lastTask && isRealtimeActiveStatus(lastTask.status))
+  );
+  const profileRefreshMs = realtimeTaskActive ? REALTIME_FAST_REFRESH_MS : REALTIME_NORMAL_REFRESH_MS;
+
+  useRealtimeRefresh(() => loadDevices({ silent: true }), REALTIME_NORMAL_REFRESH_MS);
+  useRealtimeRefresh(
+    () => {
+      if (selectedDeviceId !== null) return loadProfile(selectedDeviceId, { silent: true });
+    },
+    selectedDeviceId === null ? null : profileRefreshMs
+  );
+
+  useEffect(() => {
+    if (!lastTask || !profile) return;
+    const refreshedTask = profile.recent_tasks.find((task) => task.task_id === lastTask.task_id);
+    if (
+      !refreshedTask ||
+      (refreshedTask.status === lastTask.status && refreshedTask.updated_at === lastTask.updated_at)
+    ) {
+      return;
+    }
+    setLastTask((current) =>
+      current && current.task_id === refreshedTask.task_id
+        ? { ...current, ...refreshedTask }
+        : current
+    );
+  }, [lastTask, profile]);
 
   const canCollect = hasPermission(PERM.DEVICE_COLLECT);
   const canManage = hasPermission(PERM.DEVICE_MANAGE);
   const canSubmitChange = hasPermission(PERM.DEVICE_CHANGE_SUBMIT);
   const readyForChange = Boolean(profile?.onboarding_summary?.ready_for_change);
+
+  const handleListModeChange = useCallback((mode: DeviceListMode) => {
+    setListMode(mode);
+    if (mode === "compact") setLeftWidth((width) => Math.min(width, 440));
+    if (mode === "expanded") setLeftWidth((width) => Math.max(width, 720));
+  }, []);
+
+  const startResize = useCallback((
+    side: "left" | "right",
+    event: React.PointerEvent<HTMLButtonElement>
+  ) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startLeft = leftWidth;
+    const startRight = rightWidth;
+    const viewportWidth = layoutRef.current?.clientWidth ?? window.innerWidth;
+    const maxSideWidth = Math.max(320, Math.min(900, viewportWidth - 520));
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function move(moveEvent: PointerEvent) {
+      const delta = moveEvent.clientX - startX;
+      if (side === "left") {
+        setListMode((mode) => (mode === "collapsed" ? "compact" : mode));
+        setLeftWidth(clamp(startLeft + delta, 280, maxSideWidth));
+      } else {
+        setStatusCollapsed(false);
+        setRightWidth(clamp(startRight - delta, 320, maxSideWidth));
+      }
+    }
+
+    function stop() {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    }
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }, [leftWidth, rightWidth]);
 
   async function submitSnapshot() {
     if (!selectedDeviceId || configTaskRunning || !canCollect) return;
@@ -288,6 +395,32 @@ function DevicesTab() {
     } catch (e) {
       setSubmitState("error");
       setError(errorMessage(e));
+    }
+  }
+
+  async function submitFullRefresh() {
+    if (!selectedDeviceId || configTaskRunning) return;
+    setSubmitState("loading");
+    setError(null);
+    try {
+      await api.submitCapabilityDiscovery(selectedDeviceId);
+      const task = await api.collectSnapshot(selectedDeviceId, datastore);
+      setLastTask(task);
+      await loadProfile(selectedDeviceId);
+      setSubmitState("loaded");
+    } catch (e) {
+      setSubmitState("error");
+      setError(errorMessage(e));
+    }
+  }
+
+  async function initialCollect(deviceId: number) {
+    try {
+      await api.submitCapabilityDiscovery(deviceId);
+      await api.collectSnapshot(deviceId, datastore);
+      await loadProfile(deviceId);
+    } catch {
+      // Device was created — silently ignore collection errors
     }
   }
 
@@ -342,12 +475,17 @@ function DevicesTab() {
 
   return (
     <div
-      className={cn(
-        "grid h-full min-h-0 w-full grid-rows-[minmax(12rem,32dvh)_minmax(0,1fr)] gap-2 lg:grid-rows-none xl:gap-3",
-        listMode === "collapsed" && "lg:grid-cols-[64px_minmax(0,1fr)]",
-        listMode === "compact" && "lg:grid-cols-[clamp(320px,24vw,440px)_minmax(0,1fr)]",
-        listMode === "expanded" && "lg:grid-cols-[minmax(720px,76vw)_minmax(360px,1fr)]"
-      )}
+      ref={layoutRef}
+      className="flex h-full min-h-0 w-full flex-col gap-2 lg:grid lg:grid-rows-none lg:gap-0 xl:gap-0"
+      style={{
+        gridTemplateColumns: [
+          listMode === "collapsed" ? "64px" : listMode === "expanded" ? "minmax(0,1fr)" : `${leftWidth}px`,
+          listMode === "expanded" ? "0" : "10px",
+          listMode === "expanded" ? "0" : (workspaceCollapsed ? "64px" : "minmax(360px,1fr)"),
+          "10px",
+          statusCollapsed ? "64px" : `${rightWidth}px`
+        ].join(" ")
+      }}
     >
       <DeviceInventoryPane
         mode={listMode}
@@ -359,7 +497,7 @@ function DevicesTab() {
         canManage={canManage}
         loading={devicesState === "loading"}
         error={devicesState === "error" ? error : null}
-        onModeChange={setListMode}
+        onModeChange={handleListModeChange}
         onQueryChange={setDeviceQuery}
         onToggleCreate={() => setShowCreate((value) => !value)}
         onRefresh={() => void loadDevices()}
@@ -368,17 +506,40 @@ function DevicesTab() {
           setShowCreate(false);
           await loadDevices();
           setSelectedDeviceId(deviceId);
+          void initialCollect(deviceId);
+        }}
+        onDelete={async (deviceId) => {
+          await api.deleteDevice(deviceId);
+          if (selectedDeviceId === deviceId) {
+            setSelectedDeviceId(null);
+            setProfile(null);
+            setSnapshots([]);
+          }
+          await loadDevices();
         }}
       />
 
+      <ResizeHandle
+        label="Resize device list"
+        hidden={listMode === "collapsed" || listMode === "expanded"}
+        onPointerDown={(event) => startResize("left", event)}
+      />
+
       <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-warm bg-canvas/95">
+        {workspaceCollapsed ? (
+          <CollapsedWorkspacePane
+            device={selectedDevice}
+            onExpand={() => setWorkspaceCollapsed(false)}
+          />
+        ) : null}
+
         {selectedDevice === null && devicesState !== "loading" ? (
           <div className="flex min-h-0 flex-1 items-center justify-center p-4">
             <EmptyState icon={<HardDrive className="h-6 w-6" />} title="Select a device" />
           </div>
         ) : null}
 
-        {selectedDevice !== null ? (
+        {selectedDevice !== null && !workspaceCollapsed ? (
           <DeviceWorkspace
             device={selectedDevice}
             profile={profile}
@@ -390,7 +551,6 @@ function DevicesTab() {
             error={error}
             canCollect={canCollect}
             canSubmitChange={canSubmitChange}
-            canApprove={hasPermission(PERM.DEVICE_CHANGE_APPROVE)}
             readyForChange={readyForChange}
             submitBusy={submitState === "loading"}
             changeBusy={changeSubmitState === "loading"}
@@ -402,8 +562,10 @@ function DevicesTab() {
             leafDrafts={leafDrafts}
             preflight={preflight}
             onDetailModeChange={setDetailMode}
+            onCollapseWorkspace={() => setWorkspaceCollapsed(true)}
             onDatastoreChange={setDatastore}
             onRefresh={() => void loadProfile(selectedDevice.id)}
+            onFullRefresh={() => void submitFullRefresh()}
             onCollect={() => void submitSnapshot()}
             onSelectPath={setSelectedObjectPath}
             onChangeSummaryChange={(value) => {
@@ -424,11 +586,170 @@ function DevicesTab() {
             }}
             onPreviewChange={() => void previewConfigChange()}
             onSubmitChange={() => void submitConfigChange()}
-            onRollbackSuccess={() => { void loadProfile(selectedDeviceId!); }}
           />
         ) : null}
       </section>
+
+      <ResizeHandle
+        label="Resize status history"
+        hidden={statusCollapsed}
+        onPointerDown={(event) => startResize("right", event)}
+      />
+
+      <DeviceStatusPane
+        collapsed={statusCollapsed}
+        profile={profile}
+        snapshots={snapshots}
+        lastTask={lastTask}
+        configTaskRunning={Boolean(configTaskRunning)}
+        canSubmitChange={canSubmitChange}
+        canApprove={hasPermission(PERM.DEVICE_CHANGE_APPROVE)}
+        deviceId={selectedDevice?.id}
+        onToggleCollapsed={() => setStatusCollapsed((value) => !value)}
+        onStartChange={(snapshot) => {
+          setDatastore(snapshot.datastore);
+          setDetailMode("config");
+          setWorkspaceCollapsed(false);
+        }}
+        onRollbackSuccess={() => { if (selectedDeviceId !== null) void loadProfile(selectedDeviceId); }}
+      />
     </div>
+  );
+}
+
+function ResizeHandle({
+  label,
+  hidden,
+  onPointerDown
+}: {
+  label: string;
+  hidden?: boolean;
+  onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onPointerDown={onPointerDown}
+      className={cn(
+        "hidden min-h-0 cursor-col-resize items-center justify-center rounded text-muted transition hover:bg-paper hover:text-accent focus:outline-none focus:ring-2 focus:ring-warm-strong lg:flex",
+        hidden && "pointer-events-none opacity-0"
+      )}
+    >
+      <GripVertical className="h-4 w-4" aria-hidden />
+    </button>
+  );
+}
+
+function CollapsedWorkspacePane({
+  device,
+  onExpand
+}: {
+  device: Device | null;
+  onExpand: () => void;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center gap-3 py-3">
+      <Button
+        aria-label="Expand workspace"
+        title="Expand workspace"
+        onClick={onExpand}
+        className="h-9 w-9 px-0 bg-paper"
+      >
+        <Maximize2 className="h-4 w-4" aria-hidden />
+      </Button>
+      <div className="h-px w-8 bg-warm" />
+      <div className="flex min-h-0 flex-1 items-center justify-center px-2">
+        <p className="max-h-full [writing-mode:vertical-rl] truncate text-xs font-semibold text-muted">
+          {device?.name ?? "Workspace"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function DeviceStatusPane({
+  collapsed,
+  profile,
+  snapshots,
+  lastTask,
+  configTaskRunning,
+  canSubmitChange,
+  canApprove,
+  deviceId,
+  onToggleCollapsed,
+  onStartChange,
+  onRollbackSuccess
+}: {
+  collapsed: boolean;
+  profile: DeviceProfile | null;
+  snapshots: ConfigSnapshot[];
+  lastTask: TaskRead | null;
+  configTaskRunning: boolean;
+  canSubmitChange: boolean;
+  canApprove: boolean;
+  deviceId?: number;
+  onToggleCollapsed: () => void;
+  onStartChange: (snapshot: ConfigSnapshot) => void;
+  onRollbackSuccess: () => void;
+}) {
+  if (collapsed) {
+    return (
+      <aside className="flex min-h-0 flex-col items-center gap-3 rounded border border-warm bg-canvas/95 py-3">
+        <Button
+          aria-label="Expand status history"
+          title="Expand status history"
+          onClick={onToggleCollapsed}
+          className="h-9 w-9 px-0 bg-paper"
+        >
+          <PanelRightOpen className="h-4 w-4" aria-hidden />
+        </Button>
+        <div className="h-px w-8 bg-warm" />
+        <div className="flex min-h-0 flex-1 items-center justify-center px-2">
+          <p className="[writing-mode:vertical-rl] text-xs font-semibold text-muted">
+            Status History
+          </p>
+        </div>
+        <StatusBadge status={profile?.status ?? "idle"} />
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-warm bg-canvas/95">
+      <div className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-warm px-4">
+        <div className="min-w-0">
+          <h2 className="truncate text-lg font-semibold">Status History</h2>
+          <p className="font-mono text-[11px] text-muted">Boundary · Snapshots · Tasks</p>
+        </div>
+        <Button
+          aria-label="Collapse status history"
+          title="Collapse status history"
+          onClick={onToggleCollapsed}
+          className="h-9 w-9 px-0 bg-paper"
+        >
+          <PanelRightClose className="h-4 w-4" aria-hidden />
+        </Button>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+        <ReadOnlyPanel
+          profile={profile}
+          lastTask={lastTask}
+          configTaskRunning={configTaskRunning}
+        />
+        <SnapshotTable
+          snapshots={snapshots}
+          canSubmitChange={canSubmitChange}
+          canApprove={canApprove}
+          deviceId={deviceId}
+          onStartChange={onStartChange}
+          onRollbackSuccess={onRollbackSuccess}
+        />
+        <RecentTasks tasks={profile?.recent_tasks ?? []} />
+      </div>
+    </aside>
   );
 }
 
@@ -447,7 +768,8 @@ function DeviceInventoryPane({
   onToggleCreate,
   onRefresh,
   onSelect,
-  onCreateSuccess
+  onCreateSuccess,
+  onDelete
 }: {
   mode: DeviceListMode;
   devices: Device[];
@@ -464,6 +786,7 @@ function DeviceInventoryPane({
   onRefresh: () => void;
   onSelect: (deviceId: number) => void;
   onCreateSuccess: (deviceId: number) => Promise<void>;
+  onDelete: (deviceId: number) => Promise<void>;
 }) {
   if (mode === "collapsed") {
     const selected = devices.find((device) => device.id === selectedDeviceId);
@@ -582,7 +905,10 @@ function DeviceInventoryPane({
                 key={device.id}
                 device={device}
                 active={device.id === selectedDeviceId}
+                canManage={canManage}
+                showDelete={false}
                 onSelect={() => onSelect(device.id)}
+                onDelete={() => onDelete(device.id)}
               />
             ))}
           </div>
@@ -591,7 +917,9 @@ function DeviceInventoryPane({
           <DeviceInventoryTable
             devices={devices}
             selectedDeviceId={selectedDeviceId}
+            canManage={canManage}
             onSelect={onSelect}
+            onDelete={onDelete}
           />
         ) : null}
       </div>
@@ -602,12 +930,29 @@ function DeviceInventoryPane({
 function DeviceInventoryTable({
   devices,
   selectedDeviceId,
-  onSelect
+  canManage,
+  onSelect,
+  onDelete
 }: {
   devices: Device[];
   selectedDeviceId: number | null;
+  canManage: boolean;
   onSelect: (deviceId: number) => void;
+  onDelete: (deviceId: number) => Promise<void>;
 }) {
+  const [confirmingId, setConfirmingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  async function handleDelete(deviceId: number) {
+    setDeletingId(deviceId);
+    try {
+      await onDelete(deviceId);
+    } finally {
+      setDeletingId(null);
+      setConfirmingId(null);
+    }
+  }
+
   return (
     <div className="overflow-x-auto rounded border border-warm">
       <table className="w-full min-w-[1180px] border-collapse text-sm">
@@ -621,6 +966,7 @@ function DeviceInventoryTable({
             <th className="px-3 py-2 font-medium">Onboarding</th>
             <th className="px-3 py-2 font-medium">Baseline</th>
             <th className="px-3 py-2 font-medium">Updated</th>
+            {canManage ? <th className="px-3 py-2 font-medium">Actions</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -673,6 +1019,37 @@ function DeviceInventoryTable({
                   <p className="mt-1">{device.last_config_snapshot ? formatDate(device.last_config_snapshot.collected_at) : "-"}</p>
                 </td>
                 <td className="px-3 py-3 text-xs text-muted">{formatDate(device.updated_at)}</td>
+                {canManage ? (
+                  <td className="px-3 py-3 text-xs" onClick={(e) => e.stopPropagation()}>
+                    {confirmingId === device.id ? (
+                      <div className="flex items-center gap-1">
+                        <span className="mr-1 text-[11px] font-medium text-red-500">确认删除?</span>
+                        <Button
+                          busy={deletingId === device.id}
+                          onClick={() => void handleDelete(device.id)}
+                          className="h-7 px-2 text-[11px] border-red-400 text-red-500 hover:bg-red-50"
+                        >
+                          <CheckCircle className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          onClick={() => setConfirmingId(null)}
+                          className="h-7 px-2 text-[11px]"
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        aria-label="Delete device"
+                        title="删除设备"
+                        onClick={() => setConfirmingId(device.id)}
+                        className="h-7 w-7 px-0 text-muted hover:border-red-400 hover:text-red-500"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </td>
+                ) : null}
               </tr>
             );
           })}
@@ -693,7 +1070,6 @@ function DeviceWorkspace({
   error,
   canCollect,
   canSubmitChange,
-  canApprove,
   readyForChange,
   submitBusy,
   changeBusy,
@@ -705,8 +1081,10 @@ function DeviceWorkspace({
   leafDrafts,
   preflight,
   onDetailModeChange,
+  onCollapseWorkspace,
   onDatastoreChange,
   onRefresh,
+  onFullRefresh,
   onCollect,
   onSelectPath,
   onChangeSummaryChange,
@@ -714,8 +1092,7 @@ function DeviceWorkspace({
   onConfigBodyChange,
   onLeafDraftChange,
   onPreviewChange,
-  onSubmitChange,
-  onRollbackSuccess
+  onSubmitChange
 }: {
   device: Device;
   profile: DeviceProfile | null;
@@ -727,7 +1104,6 @@ function DeviceWorkspace({
   error: string | null;
   canCollect: boolean;
   canSubmitChange: boolean;
-  canApprove: boolean;
   readyForChange: boolean;
   submitBusy: boolean;
   changeBusy: boolean;
@@ -739,8 +1115,10 @@ function DeviceWorkspace({
   leafDrafts: Record<string, string>;
   preflight: ChangePreflightResponse | null;
   onDetailModeChange: (mode: DeviceDetailMode) => void;
+  onCollapseWorkspace: () => void;
   onDatastoreChange: (datastore: string) => void;
   onRefresh: () => void;
+  onFullRefresh: () => void;
   onCollect: () => void;
   onSelectPath: (path: string) => void;
   onChangeSummaryChange: (value: string) => void;
@@ -749,36 +1127,21 @@ function DeviceWorkspace({
   onLeafDraftChange: (path: string, value: string) => void;
   onPreviewChange: () => void;
   onSubmitChange: () => void;
-  onRollbackSuccess: () => void;
 }) {
   const operationalTree = useMemo(
-    () => buildOperationalTree(device, profile, snapshots, lastTask),
-    [device, lastTask, profile, snapshots]
+    () => buildOperationalTree(device, snapshots, datastore),
+    [datastore, device, snapshots]
   );
   const configTree = useMemo(
-    () =>
-      buildConfigTree({
-        device,
-        profile,
-        datastore,
-        snapshots,
-        changeSummary,
-        changeReason,
-        configBody,
-        leafDrafts,
-        preflight
-      }),
-    [changeReason, changeSummary, configBody, datastore, device, leafDrafts, preflight, profile, snapshots]
+    () => buildConfigTree(device, datastore, snapshots),
+    [datastore, device, snapshots]
   );
   const modeDisabledReason = readyForChange
     ? null
     : profile?.onboarding_summary?.blockers.join(", ") || "device onboarding is incomplete";
 
   function editTreeLeaf(path: string, value: string) {
-    if (path.endsWith(".change_summary")) onChangeSummaryChange(value);
-    else if (path.endsWith(".reason")) onChangeReasonChange(value);
-    else if (path.endsWith(".config_body")) onConfigBodyChange(value);
-    else onLeafDraftChange(path, value);
+    onLeafDraftChange(path, value);
   }
 
   return (
@@ -840,14 +1203,16 @@ function DeviceWorkspace({
                 Collect
               </Button>
               <Button
-                aria-label="Refresh profile"
-                title="Refresh profile"
-                onClick={onRefresh}
-                busy={loading}
+                aria-label="Discover capabilities and collect config"
+                title="Discover capabilities and collect config"
+                onClick={onFullRefresh}
+                disabled={configTaskRunning || submitBusy}
+                busy={submitBusy}
                 className="h-9 w-9 px-0"
               >
                 <RefreshCw className="h-4 w-4" aria-hidden />
               </Button>
+
             </div>
           </div>
         </div>
@@ -860,7 +1225,7 @@ function DeviceWorkspace({
       ) : null}
 
       {detailMode === "operational" ? (
-        <div className="grid min-h-0 flex-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_clamp(320px,27vw,440px)]">
+        <div className="min-h-0 flex-1 overflow-auto p-3">
           <InfoPanel icon={<Settings2 />} title="NETCONF Object Tree">
             <ObjectTree
               data={operationalTree}
@@ -868,22 +1233,6 @@ function DeviceWorkspace({
               onSelectPath={onSelectPath}
             />
           </InfoPanel>
-          <aside className="space-y-3">
-            <ReadOnlyPanel
-              profile={profile}
-              lastTask={lastTask}
-              configTaskRunning={configTaskRunning}
-            />
-            <SnapshotTable
-              snapshots={snapshots}
-              canSubmitChange={canSubmitChange}
-              canApprove={canApprove}
-              deviceId={device.id}
-              onStartChange={(snapshot) => onDatastoreChange(snapshot.datastore)}
-              onRollbackSuccess={onRollbackSuccess}
-            />
-            <RecentTasks tasks={profile?.recent_tasks ?? []} />
-          </aside>
         </div>
       ) : (
         <div className="grid min-h-0 flex-1 gap-3 overflow-auto p-3 xl:grid-cols-[minmax(0,1fr)_clamp(360px,32vw,520px)]">
@@ -894,9 +1243,6 @@ function DeviceWorkspace({
               editable
               onSelectPath={onSelectPath}
               onLeafChange={editTreeLeaf}
-              editablePath={(path) =>
-                path.includes(".change_request.") || path.includes(".candidate_configuration.")
-              }
             />
           </InfoPanel>
           <ConfigEditPanel
@@ -1030,13 +1376,7 @@ function ObjectTree({
   editablePath?: (path: string) => boolean;
 }) {
   const [openPaths, setOpenPaths] = useState<Set<string>>(
-    () => new Set([
-      "root",
-      "root.netconf_get",
-      "root.netconf_edit_config",
-      "root.netconf_edit_config.device_configuration",
-      "root.netconf_edit_config.device_configuration.data"
-    ])
+    () => new Set(["root", "root.data"])
   );
 
   function toggle(path: string) {
@@ -1187,124 +1527,78 @@ function TreeRows({
   );
 }
 
+function unwrapNetconfTree(tree: Record<string, unknown>): Record<string, unknown> {
+  const keys = Object.keys(tree);
+  if (keys.length !== 1 || keys[0] === "unparsed_content" || keys[0] === "unavailable") {
+    return tree;
+  }
+  const inner = tree[keys[0]];
+  if (!inner || typeof inner !== "object" || Array.isArray(inner)) {
+    return tree;
+  }
+  const innerObj = inner as Record<string, unknown>;
+  // Unwrap rpc-reply (or any single root wrapper) that contains a "data" element,
+  // returning the data children directly so the actual config modules are at the top level.
+  if ("data" in innerObj) {
+    const data = innerObj["data"];
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      return data as Record<string, unknown>;
+    }
+  }
+  // Root element is itself the config container (e.g. <data> was the XML root).
+  return innerObj;
+}
+
 function buildOperationalTree(
   device: Device,
-  profile: DeviceProfile | null,
   snapshots: ConfigSnapshot[],
-  lastTask: TaskRead | null
-) {
-  const effectiveProfile = profile ?? device;
+  datastore: string
+): Record<string, unknown> {
+  const matchingSnapshot =
+    snapshots.find((s) => s.datastore === datastore) ??
+    (device.last_config_snapshot?.datastore === datastore ? device.last_config_snapshot : null);
+  const latest = matchingSnapshot ?? snapshots[0] ?? device.last_config_snapshot ?? null;
+
+  if (latest?.config_tree) {
+    return unwrapNetconfTree(latest.config_tree);
+  }
+
   return {
-    netconf_get: {
-      identity: {
-        id: device.id,
-        name: device.name,
-        status: effectiveProfile.status,
-        group: device.group,
-        serial_number: effectiveProfile.serial_number
-      },
-      connection: sanitizeConnection(device.connection),
-      server_capabilities: profile?.capabilities ?? device.last_discovery?.capabilities ?? [],
-      yang_modules: parseYangCapabilities(profile?.capabilities ?? device.last_discovery?.capabilities ?? []),
-      system_state: profile?.system_info ?? {},
-      discovery: device.last_discovery,
-      onboarding: profile?.onboarding_summary ?? device.onboarding_summary,
-      config_snapshots: snapshots,
-      recent_tasks: profile?.recent_tasks ?? device.recent_tasks,
-      last_submitted_task: lastTask,
-      safety: profile?.safety_summary ?? {}
+    unavailable: {
+      reason: latest
+        ? latest.config_tree === undefined
+          ? "snapshot_not_yet_loaded"
+          : "no_content"
+        : "no_snapshot_collected",
+      snapshot_id: latest?.id ?? null,
+      datastore
     }
   };
 }
 
-function buildConfigTree({
-  device,
-  profile,
-  datastore,
-  snapshots,
-  changeSummary,
-  changeReason,
-  configBody,
-  leafDrafts,
-  preflight
-}: {
-  device: Device;
-  profile: DeviceProfile | null;
-  datastore: string;
-  snapshots: ConfigSnapshot[];
-  changeSummary: string;
-  changeReason: string;
-  configBody: string;
-  leafDrafts: Record<string, string>;
-  preflight: ChangePreflightResponse | null;
-}) {
+function buildConfigTree(
+  device: Device,
+  datastore: string,
+  snapshots: ConfigSnapshot[]
+): Record<string, unknown> {
   const latestForDatastore =
     snapshots.find((snapshot) => snapshot.datastore === datastore) ??
     (device.last_config_snapshot?.datastore === datastore ? device.last_config_snapshot : null);
   const latest = latestForDatastore ?? snapshots[0] ?? device.last_config_snapshot ?? null;
-  const deviceConfiguration = latest?.config_tree ?? {
+
+  if (latest?.config_tree) {
+    return unwrapNetconfTree(latest.config_tree);
+  }
+
+  return {
     unavailable: {
       reason: latest ? "snapshot_content_tree_not_loaded" : "no_config_snapshot_collected",
       snapshot_id: latest?.id ?? null,
       datastore
     }
   };
-  return {
-    netconf_edit_config: {
-      device_configuration: deviceConfiguration,
-      target: {
-        device_id: device.id,
-        datastore,
-        protocol: device.connection?.protocol ?? "netconf",
-        endpoint: device.connection ? `${device.connection.host}:${device.connection.port}` : null
-      },
-      change_request: {
-        change_summary: changeSummary,
-        reason: changeReason
-      },
-      candidate_configuration: {
-        config_body: configBody,
-        edited_leaf_overrides: leafDrafts
-      },
-      model_context: {
-        server_capabilities: profile?.capabilities ?? device.last_discovery?.capabilities ?? [],
-        yang_modules: parseYangCapabilities(profile?.capabilities ?? device.last_discovery?.capabilities ?? []),
-        latest_snapshot: latest,
-        safety: profile?.safety_summary ?? {}
-      },
-      preflight: preflight ?? {
-        status: "not_run",
-        passed: false
-      }
-    }
-  };
 }
 
-function sanitizeConnection(connection: Device["connection"]) {
-  if (!connection) return null;
-  return {
-    protocol: connection.protocol,
-    host: connection.host,
-    port: connection.port,
-    username: connection.username,
-    credential: connection.has_credential ? "referenced" : "missing"
-  };
-}
-
-function parseYangCapabilities(capabilities: string[]) {
-  return capabilities.map((capability) => {
-    const [base, query] = capability.split("?");
-    const params = new URLSearchParams(query ?? "");
-    const moduleName = params.get("module") ?? base.split(":").pop() ?? capability;
-    return {
-      module: moduleName,
-      revision: params.get("revision"),
-      namespace: base,
-      features: params.get("features")?.split(",").filter(Boolean) ?? [],
-      raw: capability
-    };
-  });
-}
 
 function isObjectLike(value: unknown): value is Record<string, unknown> | unknown[] {
   return value !== null && typeof value === "object";
@@ -1337,6 +1631,10 @@ function formatTreeValue(value: unknown) {
   return JSON.stringify(value);
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
 // ── Changes Tab ────────────────────────────────────────────────────────────
 
 function ChangesTab() {
@@ -1349,22 +1647,31 @@ function ChangesTab() {
   const canExecute = hasPermission(PERM.DEVICE_CHANGE_EXECUTE);
   const canSubmit = hasPermission(PERM.DEVICE_CHANGE_SUBMIT);
 
-  const loadChanges = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadChanges = useCallback(async (options: RefreshOptions = {}) => {
+    if (!options.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const resp = await api.listChangeRequests();
       setChanges(resp.items);
     } catch (e) {
-      setError(errorMessage(e));
+      if (!options.silent) setError(errorMessage(e));
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void loadChanges();
   }, [loadChanges]);
+
+  useRealtimeRefresh(
+    () => loadChanges({ silent: true }),
+    changes.some((change) => isRealtimeActiveStatus(change.status))
+      ? REALTIME_FAST_REFRESH_MS
+      : REALTIME_NORMAL_REFRESH_MS
+  );
 
   async function handleApprove(id: number) {
     try {
@@ -1999,9 +2306,11 @@ function AdminTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadAdminData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadAdminData = useCallback(async (options: RefreshOptions = {}) => {
+    if (!options.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const [nextUsers, nextRoles, nextPermissions] = await Promise.all([
         api.listUsers(),
@@ -2012,13 +2321,14 @@ function AdminTab() {
       setRoles(nextRoles);
       setPermissions(nextPermissions);
     } catch (e) {
-      setError(errorMessage(e));
+      if (!options.silent) setError(errorMessage(e));
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => { void loadAdminData(); }, [loadAdminData]);
+  useRealtimeRefresh(() => loadAdminData({ silent: true }), REALTIME_SLOW_REFRESH_MS);
 
   return (
     <div className="mx-auto grid max-w-6xl gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -2333,20 +2643,23 @@ function AuditTab() {
   const [error, setError] = useState<string | null>(null);
   const hasFullAudit = hasPermission(PERM.AUDIT_READ_FULL);
 
-  const loadLogs = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadLogs = useCallback(async (options: RefreshOptions = {}) => {
+    if (!options.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const resp = await api.listAuditLogs({ limit: 50 });
       setLogs(resp.items);
     } catch (e) {
-      setError(errorMessage(e));
+      if (!options.silent) setError(errorMessage(e));
     } finally {
-      setLoading(false);
+      if (!options.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => { void loadLogs(); }, [loadLogs]);
+  useRealtimeRefresh(() => loadLogs({ silent: true }), REALTIME_NORMAL_REFRESH_MS);
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -2405,6 +2718,61 @@ function AuditTab() {
 }
 
 // ── Shared sub-components ──────────────────────────────────────────────────
+
+function useRealtimeRefresh(
+  refresh: () => void | Promise<void>,
+  intervalMs: number | null,
+  enabled = true
+) {
+  const refreshRef = useRef(refresh);
+
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!enabled || intervalMs === null) return;
+
+    let cancelled = false;
+    let inFlight = false;
+    let timer: number | null = null;
+
+    const run = async () => {
+      if (inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
+      try {
+        await refreshRef.current();
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        void run().finally(() => {
+          if (!cancelled) schedule();
+        });
+      }, intervalMs);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void run();
+    };
+
+    schedule();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [enabled, intervalMs]);
+}
+
+function isRealtimeActiveStatus(status: string | null | undefined) {
+  return status === "queued" || status === "running" || status === "verifying";
+}
 
 function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Promise<void> }) {
   const [name, setName] = useState("");
@@ -2550,11 +2918,24 @@ function changePreflightFromRequest(cr: ChangeRequestRead): ChangePreflightRespo
 }
 
 function DeviceListItem({
-  device, active, onSelect
-}: { device: Device; active: boolean; onSelect: () => void }) {
+  device, active, canManage, showDelete = true, onSelect, onDelete
+}: { device: Device; active: boolean; canManage: boolean; showDelete?: boolean; onSelect: () => void; onDelete: () => Promise<void> }) {
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation();
+    setDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setDeleting(false);
+      setConfirming(false);
+    }
+  }
+
   return (
-    <button
-      onClick={onSelect}
+    <div
       className={cn(
         "w-full rounded border p-3 text-left transition",
         active
@@ -2562,20 +2943,53 @@ function DeviceListItem({
           : "border-transparent bg-transparent hover:border-warm hover:bg-paper/70"
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{device.name}</p>
-          <p className="mt-1 truncate font-mono text-[11px] text-muted">
-            {device.group ?? "ungrouped"}
-          </p>
+      <button className="w-full text-left" onClick={onSelect}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">{device.name}</p>
+            <p className="mt-1 truncate font-mono text-[11px] text-muted">
+              {device.group ?? "ungrouped"}
+            </p>
+          </div>
+          <StatusBadge status={device.status} />
         </div>
-        <StatusBadge status={device.status} />
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted">
-        <Metric label="Discovery" value={summaryValue(device.last_discovery?.summary)} />
-        <Metric label="Snapshot" value={digestShort(device.last_config_snapshot?.content_digest)} />
-      </div>
-    </button>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted">
+          <Metric label="Discovery" value={summaryValue(device.last_discovery?.summary)} />
+          <Metric label="Snapshot" value={digestShort(device.last_config_snapshot?.content_digest)} />
+        </div>
+      </button>
+      {canManage && showDelete ? (
+        <div className="mt-2 flex items-center justify-end gap-1 border-t border-warm/50 pt-2">
+          {confirming ? (
+            <>
+              <span className="mr-1 text-[11px] font-medium text-red-500">确认删除?</span>
+              <Button
+                busy={deleting}
+                onClick={(e) => void handleDelete(e)}
+                className="h-6 px-1.5 text-[11px] border-red-400 text-red-500 hover:bg-red-50"
+              >
+                <CheckCircle className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
+                className="h-6 px-1.5 text-[11px]"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+              </Button>
+            </>
+          ) : (
+            <Button
+              aria-label="Delete device"
+              title="删除设备"
+              onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+              className="h-6 w-6 px-0 text-muted hover:border-red-400 hover:text-red-500"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2597,7 +3011,7 @@ function SnapshotTable({
   const [rollbackTarget, setRollbackTarget] = useState<ConfigSnapshot | null>(null);
 
   return (
-    <InfoPanel icon={<FileClock />} title="Snapshots">
+    <InfoPanel icon={<FileClock />} title="Snapshots" collapsible contentClassName="max-h-[42dvh] overflow-auto pr-1">
       {snapshots.length === 0 ? (
         <EmptyState icon={<Database className="h-6 w-6" />} title="No snapshots collected" />
       ) : (
@@ -2678,7 +3092,7 @@ function ReadOnlyPanel({
   profile, lastTask, configTaskRunning
 }: { profile: DeviceProfile | null; lastTask: TaskRead | null; configTaskRunning: boolean }) {
   return (
-    <InfoPanel icon={<ShieldCheck />} title="Boundary">
+    <InfoPanel icon={<ShieldCheck />} title="Boundary" collapsible contentClassName="max-h-[30dvh] overflow-auto pr-1">
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <Metric label="Full config" value={String(profile?.safety_summary.exposes_full_config ?? false)} />
@@ -2705,7 +3119,7 @@ function ReadOnlyPanel({
 
 function RecentTasks({ tasks }: { tasks: DeviceProfile["recent_tasks"] }) {
   return (
-    <InfoPanel icon={<ListRestart />} title="Recent Tasks">
+    <InfoPanel icon={<ListRestart />} title="Recent Tasks" collapsible contentClassName="max-h-[42dvh] overflow-auto pr-1">
       {tasks.length === 0 ? (
         <EmptyState icon={<ListRestart className="h-6 w-6" />} title="No recent tasks" />
       ) : (
@@ -2730,16 +3144,39 @@ function RecentTasks({ tasks }: { tasks: DeviceProfile["recent_tasks"] }) {
   );
 }
 
-function InfoPanel({ icon, title, children }: {
-  icon: React.ReactNode; title: string; children: React.ReactNode
+function InfoPanel({ icon, title, children, collapsible = false, defaultOpen = true, className, contentClassName }: {
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+  className?: string;
+  contentClassName?: string;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+
   return (
-    <section className="rounded border border-warm bg-surface/70 p-4">
-      <div className="mb-4 flex items-center gap-2">
+    <section className={cn("rounded border border-warm bg-surface/70 p-4", className)}>
+      <div className={cn("flex items-center gap-2", open && "mb-4")}>
         <span className="text-accent [&_svg]:h-4 [&_svg]:w-4">{icon}</span>
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</h3>
+        {collapsible ? (
+          <button
+            type="button"
+            aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
+            title={open ? `Collapse ${title}` : `Expand ${title}`}
+            onClick={() => setOpen((value) => !value)}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted transition hover:bg-paper hover:text-ink"
+          >
+            {open ? (
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+            )}
+          </button>
+        ) : null}
       </div>
-      {children}
+      {open ? <div className={contentClassName}>{children}</div> : null}
     </section>
   );
 }

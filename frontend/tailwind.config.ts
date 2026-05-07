@@ -1,25 +1,26 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
+  darkMode: "media",
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        canvas: "#f2f1ed",
-        paper: "#f7f7f4",
-        surface: "#e6e5e0",
-        "surface-soft": "#ebeae5",
-        ink: "#26251e",
-        muted: "#6f6b60",
-        accent: "#f54e00",
-        ok: "#1f8a65",
-        warn: "#c08532",
-        error: "#cf2d56",
-        info: "#426a9b"
+        canvas: "rgb(var(--color-canvas) / <alpha-value>)",
+        paper: "rgb(var(--color-paper) / <alpha-value>)",
+        surface: "rgb(var(--color-surface) / <alpha-value>)",
+        "surface-soft": "rgb(var(--color-surface-soft) / <alpha-value>)",
+        ink: "rgb(var(--color-ink) / <alpha-value>)",
+        muted: "rgb(var(--color-muted) / <alpha-value>)",
+        accent: "rgb(var(--color-accent) / <alpha-value>)",
+        ok: "rgb(var(--color-ok) / <alpha-value>)",
+        warn: "rgb(var(--color-warn) / <alpha-value>)",
+        error: "rgb(var(--color-error) / <alpha-value>)",
+        info: "rgb(var(--color-info) / <alpha-value>)"
       },
       borderColor: {
-        warm: "oklab(0.263084 -0.00230259 0.0124794 / 0.14)",
-        "warm-strong": "oklab(0.263084 -0.00230259 0.0124794 / 0.26)"
+        warm: "rgb(var(--border-warm))",
+        "warm-strong": "rgb(var(--border-warm-strong))"
       },
       borderRadius: {
         DEFAULT: "8px"

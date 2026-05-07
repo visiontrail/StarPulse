@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+from sqlalchemy import delete as sql_delete, select, update as sql_update
 from sqlalchemy.orm import Session
 
 from app.api.schemas.device import DeviceCreate
 from app.devices.constants import DeviceStatus
 from app.devices.credentials import CredentialService, CredentialUnavailableError
 from app.devices.repository import DeviceRepository
-from app.storage.models import Device, DeviceConnectionConfig
+from app.storage.models import (
+    Device,
+    DeviceConfigChangePayload,
+    DeviceConfigChangeRequest,
+    DeviceConnectionConfig,
+    TaskStatus,
+)
 
 
 class DeviceConnectionConfigMissingError(RuntimeError):
@@ -51,6 +58,45 @@ class DeviceService:
 
     def get_device(self, device_id: int) -> Device | None:
         return self.repository.get_with_connection(device_id)
+
+    def delete_device(self, device_id: int) -> bool:
+        device = self.repository.get_with_connection(device_id)
+        if device is None:
+            return False
+
+        # Remove all task statuses for this device first (change_request_id refs cleaned up here too)
+        self.session.execute(sql_delete(TaskStatus).where(TaskStatus.device_id == device_id))
+
+        # Collect change request IDs, then delete payloads and requests
+        change_request_ids = list(
+            self.session.scalars(
+                select(DeviceConfigChangeRequest.id).where(
+                    DeviceConfigChangeRequest.device_id == device_id
+                )
+            )
+        )
+        if change_request_ids:
+            self.session.execute(
+                sql_delete(DeviceConfigChangePayload).where(
+                    DeviceConfigChangePayload.change_request_id.in_(change_request_ids)
+                )
+            )
+            # Null out self-referential FK before bulk delete
+            self.session.execute(
+                sql_update(DeviceConfigChangeRequest)
+                .where(DeviceConfigChangeRequest.device_id == device_id)
+                .values(rollback_of_change_id=None)
+            )
+            self.session.execute(
+                sql_delete(DeviceConfigChangeRequest).where(
+                    DeviceConfigChangeRequest.device_id == device_id
+                )
+            )
+
+        self.session.flush()
+        self.session.delete(device)
+        self.session.flush()
+        return True
 
     def ensure_ready_for_device_task(self, device_id: int) -> Device:
         device = self.repository.get_with_connection(device_id)

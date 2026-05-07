@@ -5,8 +5,41 @@
 :root {
   --font-ui: "Avenir Next";
   --font-mono: "SFMono-Regular";
-  color: #26251e;
-  background: #f2f1ed;
+  --color-canvas: 242 241 237;
+  --color-paper: 247 247 244;
+  --color-surface: 230 229 224;
+  --color-surface-soft: 235 234 229;
+  --color-ink: 38 37 30;
+  --color-muted: 111 107 96;
+  --color-accent: 245 78 0;
+  --color-ok: 31 138 101;
+  --color-warn: 192 133 50;
+  --color-error: 207 45 86;
+  --color-info: 66 106 155;
+  --border-warm: 38 37 30 / 0.14;
+  --border-warm-strong: 38 37 30 / 0.26;
+  --grid-color: 38 37 30;
+  color: rgb(var(--color-ink));
+  background: rgb(var(--color-canvas));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: 13 16 20;
+    --color-paper: 22 26 32;
+    --color-surface: 33 38 47;
+    --color-surface-soft: 27 32 39;
+    --color-ink: 246 243 236;
+    --color-muted: 164 158 146;
+    --color-accent: 255 122 24;
+    --color-ok: 78 190 145;
+    --color-warn: 226 166 78;
+    --color-error: 239 90 126;
+    --color-info: 126 166 215;
+    --border-warm: 246 243 236 / 0.14;
+    --border-warm-strong: 246 243 236 / 0.28;
+    --grid-color: 246 243 236;
+  }
 }
 
 * {
@@ -17,9 +50,9 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    linear-gradient(90deg, oklab(0.263084 -0.00230259 0.0124794 / 0.04) 1px, transparent 1px),
-    linear-gradient(0deg, oklab(0.263084 -0.00230259 0.0124794 / 0.035) 1px, transparent 1px),
-    #f2f1ed;
+    linear-gradient(90deg, rgb(var(--grid-color) / 0.045) 1px, transparent 1px),
+    linear-gradient(0deg, rgb(var(--grid-color) / 0.04) 1px, transparent 1px),
+    rgb(var(--color-canvas));
   background-size: 48px 48px;
   font-family: var(--font-ui), Avenir Next, ui-sans-serif, system-ui, sans-serif;
 }

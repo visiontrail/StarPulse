@@ -1,9 +1,10 @@
 "use client";
 
-import { LogIn, LogOut, Shield, User } from "lucide-react";
+import { LogIn, LogOut, User } from "lucide-react";
 import { useState } from "react";
 
 import { useSession } from "@/lib/session";
+import { BrandMark } from "@/components/brand";
 import { Button } from "@/components/ui";
 
 // ── Login View ─────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ export function LoginView() {
     <div className="flex min-h-screen items-center justify-center p-4">
       <div className="w-full max-w-sm rounded border border-warm bg-canvas/95 p-6 shadow-sm">
         <div className="mb-6 flex items-center gap-3">
-          <Shield className="h-5 w-5 text-accent" />
+          <BrandMark className="h-10 w-10" />
           <div>
             <p className="font-mono text-[11px] uppercase text-muted">Star Pulse</p>
             <h1 className="text-lg font-semibold">Sign in</h1>
