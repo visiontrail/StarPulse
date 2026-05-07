@@ -57,6 +57,15 @@ const en = {
   "lang.de": "Deutsch",
   "lang.ja": "日本語",
 
+  // Theme switcher
+  "theme.label": "Theme",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "theme.system": "System",
+
+  // User menu
+  "user.menu": "User menu",
+
   // Devices tab — inventory
   "devices.inventory": "Device Inventory",
   "devices.visibleCount": "{visible}/{total} visible",

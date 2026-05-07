@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 132" role="img" aria-labelledby="title desc">
+  <title id="title">Star Pulse</title>
+  <desc id="desc">Minimal Star Pulse horizontal logo with a circle and internal pulse signal.</desc>
+  <g fill="none" stroke="#26251e" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="72" cy="66" r="41" stroke-width="5.5" />
+    <path d="M39 66h18l8-15 14 35 12-48 10 28h20" stroke-width="5.5" />
+  </g>
+  <text
+    x="148"
+    y="86"
+    fill="#26251e"
+    font-family="Avenir Next, Helvetica Neue, Arial, sans-serif"
+    font-size="58"
+    font-weight="300"
+    letter-spacing="0"
+  >STAR PULSE</text>
+</svg>

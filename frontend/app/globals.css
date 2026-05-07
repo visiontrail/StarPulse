@@ -23,23 +23,21 @@
   background: rgb(var(--color-canvas));
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-canvas: 13 16 20;
-    --color-paper: 22 26 32;
-    --color-surface: 33 38 47;
-    --color-surface-soft: 27 32 39;
-    --color-ink: 246 243 236;
-    --color-muted: 164 158 146;
-    --color-accent: 255 122 24;
-    --color-ok: 78 190 145;
-    --color-warn: 226 166 78;
-    --color-error: 239 90 126;
-    --color-info: 126 166 215;
-    --border-warm: 246 243 236 / 0.14;
-    --border-warm-strong: 246 243 236 / 0.28;
-    --grid-color: 246 243 236;
-  }
+:root[data-theme="dark"] {
+  --color-canvas: 13 16 20;
+  --color-paper: 22 26 32;
+  --color-surface: 33 38 47;
+  --color-surface-soft: 27 32 39;
+  --color-ink: 246 243 236;
+  --color-muted: 164 158 146;
+  --color-accent: 255 122 24;
+  --color-ok: 78 190 145;
+  --color-warn: 226 166 78;
+  --color-error: 239 90 126;
+  --color-info: 126 166 215;
+  --border-warm: 246 243 236 / 0.14;
+  --border-warm-strong: 246 243 236 / 0.28;
+  --grid-color: 246 243 236;
 }
 
 * {

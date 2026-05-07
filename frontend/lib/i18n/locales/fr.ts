@@ -59,6 +59,15 @@ const fr: Dict = {
   "lang.de": "Deutsch",
   "lang.ja": "日本語",
 
+  // Theme switcher
+  "theme.label": "Thème",
+  "theme.light": "Clair",
+  "theme.dark": "Sombre",
+  "theme.system": "Système",
+
+  // User menu
+  "user.menu": "Menu utilisateur",
+
   // Devices tab — inventory
   "devices.inventory": "Inventaire des équipements",
   "devices.visibleCount": "{visible}/{total} visibles",

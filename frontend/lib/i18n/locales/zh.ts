@@ -59,6 +59,15 @@ const zh: Dict = {
   "lang.de": "Deutsch",
   "lang.ja": "日本語",
 
+  // Theme switcher
+  "theme.label": "主题",
+  "theme.light": "浅色",
+  "theme.dark": "深色",
+  "theme.system": "跟随系统",
+
+  // User menu
+  "user.menu": "用户菜单",
+
   // Devices tab — inventory
   "devices.inventory": "设备清单",
   "devices.visibleCount": "{visible}/{total} 可见",

@@ -38,7 +38,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandMark } from "@/components/brand";
 import { LoginView, SessionHeader } from "@/components/auth";
-import { LanguageSwitcher } from "@/components/language-switcher";
 import { Button, DatastoreSelect, EmptyState, FieldLabel, StatusBadge } from "@/components/ui";
 import { api, formatApiError, formatRollbackBlocker } from "@/lib/api";
 import { useT, type TranslateFn } from "@/lib/i18n";
@@ -118,10 +117,7 @@ function AuthenticatedConsole() {
       {/* App bar */}
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-warm bg-canvas/95 px-4">
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <BrandMark className="h-8 w-8" />
-            <p className="font-mono text-[11px] uppercase text-muted">{t("app.brand")}</p>
-          </div>
+          <BrandMark className="h-9 w-[170px] sm:h-10 sm:w-[190px]" />
           <nav className="flex gap-1">
             {tabs.map(({ id, label, icon, perm }) =>
               hasPermission(perm) ? (
@@ -143,7 +139,6 @@ function AuthenticatedConsole() {
           </nav>
         </div>
         <div className="flex items-center gap-3">
-          <LanguageSwitcher />
           <SessionHeader />
         </div>
       </div>
