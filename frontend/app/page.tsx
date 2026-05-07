@@ -1348,17 +1348,17 @@ function DeviceWorkspace({
       <header className="shrink-0 border-b border-warm px-4 py-3">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
+            <h2 className="truncate text-2xl font-semibold">{device.name}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
               <StatusBadge status={profile?.status ?? device.status} />
               <span className="font-mono text-[11px] text-muted">{device.group ?? t("device.ungrouped")}</span>
               <span className="font-mono text-[11px] text-muted">#{device.id}</span>
+              <span className="font-mono text-[11px] text-muted">
+                {device.connection
+                  ? `${device.connection.protocol}://${device.connection.host}:${device.connection.port}`
+                  : t("workspace.connectionUnavailable")}
+              </span>
             </div>
-            <h2 className="truncate text-2xl font-semibold">{device.name}</h2>
-            <p className="mt-1 truncate font-mono text-xs text-muted">
-              {device.connection
-                ? `${device.connection.protocol}://${device.connection.host}:${device.connection.port}`
-                : t("workspace.connectionUnavailable")}
-            </p>
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
@@ -1570,7 +1570,7 @@ function ConfigModelWorkspace({
       <section className="flex min-h-0 flex-col rounded border border-warm bg-surface/70 p-4">
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="text-accent"><FilePenLine className="h-4 w-4" aria-hidden /></span>
-          <h3 className="shrink-0 text-sm font-semibold">叶子节点表格</h3>
+          <h3 className="shrink-0 text-sm font-semibold">叶子节点</h3>
           <span className="select-none text-warm-strong">·</span>
           <p className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted" title={effectivePath}>{effectivePath}</p>
           <span className="shrink-0 font-mono text-[11px] text-muted">
@@ -1733,7 +1733,6 @@ function LeafDetailTable({
           <tr className="border-b border-warm">
             <th className="px-3 py-2 font-medium">叶子节点</th>
             <th className="px-3 py-2 font-medium">实例</th>
-            <th className="px-3 py-2 font-medium">YANG 模型</th>
             <th className="px-3 py-2 font-medium">类型 / 约束</th>
             <th className="px-3 py-2 font-medium">当前值</th>
             <th className="px-3 py-2 text-right font-medium">{t("table.actions")}</th>
@@ -1759,16 +1758,6 @@ function LeafDetailTable({
                 </td>
                 <td className="px-3 py-2 font-mono text-[11px] text-muted">
                   {row.instanceLabel ?? "-"}
-                </td>
-                <td className="px-3 py-2">
-                  <div className="max-w-[220px]">
-                    <p className="truncate font-mono text-[11px] text-ink" title={yangModuleLabel(row.schema)}>
-                      {yangModuleLabel(row.schema)}
-                    </p>
-                    <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={row.schema?.namespace ?? row.namespace ?? ""}>
-                      {row.schema?.kind ?? row.schema?.node_type ?? "leaf"}
-                    </p>
-                  </div>
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex max-w-[260px] flex-wrap gap-1.5">

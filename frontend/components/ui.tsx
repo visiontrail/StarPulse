@@ -44,7 +44,7 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <span
       className={cn(
-        "inline-flex h-6 items-center rounded border px-2 font-mono text-[11px] uppercase",
+        "inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded border px-2 font-mono text-[11px] uppercase",
         tone
       )}
     >
