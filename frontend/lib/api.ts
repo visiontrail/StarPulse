@@ -42,9 +42,29 @@ const ROLLBACK_BLOCKER_KEYS = [
   "ROLLBACK_ORIGIN_NOT_RECOVERABLE"
 ] as const;
 
+const PREFLIGHT_BLOCKER_KEYS = [
+  "connection_test_required",
+  "capability_discovery_required",
+  "baseline_snapshot_required",
+  "baseline_snapshot_stale",
+  "connection_config_missing",
+  "credential_unavailable",
+  "device_not_found",
+  "unsupported_datastore",
+  "config_body_missing",
+  "reason_missing",
+  "rollback_target_snapshot_required",
+  "rollback_target_mismatch"
+] as const;
+
 export function formatRollbackBlocker(blocker: string, t: Translator = identityTranslator): string {
   if ((ROLLBACK_BLOCKER_KEYS as readonly string[]).includes(blocker)) {
     const key = `rollbackBlocker.${blocker}`;
+    const localized = t(key);
+    if (localized !== key) return localized;
+  }
+  if ((PREFLIGHT_BLOCKER_KEYS as readonly string[]).includes(blocker)) {
+    const key = `blocker.${blocker}`;
     const localized = t(key);
     if (localized !== key) return localized;
   }
@@ -433,29 +453,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ rejection_note: note })
     }),
-  directExecute: (payload: {
-    device_id: number;
-    datastore: string;
-    change_summary: string;
-    change_ref?: string;
-    config_body?: string;
-    reason: string;
-  }) =>
-    request<ChangeRequestRead>("/change-requests/direct-execute", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }),
-
   // Audit
   listAuditLogs: (params?: {
+    actor_username?: string;
     action?: string;
+    target_type?: string;
     outcome?: string;
+    since?: string;
+    until?: string;
     limit?: number;
     offset?: number;
   }) => {
     const qs = new URLSearchParams();
+    if (params?.actor_username) qs.set("actor_username", params.actor_username);
     if (params?.action) qs.set("action", params.action);
+    if (params?.target_type) qs.set("target_type", params.target_type);
     if (params?.outcome) qs.set("outcome", params.outcome);
+    if (params?.since) qs.set("since", params.since);
+    if (params?.until) qs.set("until", params.until);
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
     return request<AuditLogListResponse>(`/audit/logs?${qs.toString()}`);

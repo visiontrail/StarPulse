@@ -32,9 +32,11 @@ import {
   Sparkles,
   Trash2,
   Users,
+  X,
   XCircle
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { BrandMark } from "@/components/brand";
 import { LoginView, SessionHeader } from "@/components/auth";
@@ -507,6 +509,7 @@ function DevicesTab() {
 
   async function initialCollect(deviceId: number) {
     try {
+      await api.submitConnectionTest(deviceId);
       await api.submitCapabilityDiscovery(deviceId);
       await api.collectSnapshot(deviceId, datastore);
       await loadProfile(deviceId);
@@ -585,6 +588,7 @@ function DevicesTab() {
         query={deviceQuery}
         showCreate={showCreate}
         canManage={canManage}
+        canCollect={canCollect}
         loading={devicesState === "loading"}
         error={devicesState === "error" ? error : null}
         onModeChange={handleListModeChange}
@@ -847,6 +851,7 @@ function DeviceInventoryPane({
   query,
   showCreate,
   canManage,
+  canCollect,
   loading,
   error,
   onModeChange,
@@ -864,6 +869,7 @@ function DeviceInventoryPane({
   query: string;
   showCreate: boolean;
   canManage: boolean;
+  canCollect: boolean;
   loading: boolean;
   error: string | null;
   onModeChange: (mode: DeviceListMode) => void;
@@ -1007,8 +1013,10 @@ function DeviceInventoryPane({
             devices={devices}
             selectedDeviceId={selectedDeviceId}
             canManage={canManage}
+            canCollect={canCollect}
             onSelect={onSelect}
             onDelete={onDelete}
+            onRefresh={onRefresh}
           />
         ) : null}
       </div>
@@ -1020,18 +1028,55 @@ function DeviceInventoryTable({
   devices,
   selectedDeviceId,
   canManage,
+  canCollect,
   onSelect,
-  onDelete
+  onDelete,
+  onRefresh
 }: {
   devices: Device[];
   selectedDeviceId: number | null;
   canManage: boolean;
+  canCollect: boolean;
   onSelect: (deviceId: number) => void;
   onDelete: (deviceId: number) => Promise<void>;
+  onRefresh: () => void;
 }) {
   const t = useT();
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [taskMenuId, setTaskMenuId] = useState<number | null>(null);
+  const [taskMenuAnchor, setTaskMenuAnchor] = useState<DOMRect | null>(null);
+  const [taskBusyId, setTaskBusyId] = useState<number | null>(null);
+  const taskMenuRef = useRef<HTMLDivElement>(null);
+  const taskTriggerRef = useRef<EventTarget | null>(null);
+
+  useEffect(() => {
+    if (taskMenuId === null) return;
+    function handlePointerDown(e: PointerEvent) {
+      const target = e.target as Node;
+      if (taskMenuRef.current?.contains(target)) return;
+      if (taskTriggerRef.current instanceof Node && taskTriggerRef.current.contains(target)) return;
+      setTaskMenuId(null);
+      taskTriggerRef.current = null;
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [taskMenuId]);
+
+  async function runDeviceTask(deviceId: number, action: "connection" | "discovery" | "snapshot") {
+    setTaskMenuId(null);
+    setTaskBusyId(deviceId);
+    try {
+      if (action === "connection") await api.submitConnectionTest(deviceId);
+      else if (action === "discovery") await api.submitCapabilityDiscovery(deviceId);
+      else await api.collectSnapshot(deviceId, "running");
+      onRefresh();
+    } catch {
+      // ignore — background task, errors aren't surfaced here
+    } finally {
+      setTaskBusyId(null);
+    }
+  }
 
   async function handleDelete(deviceId: number) {
     setDeletingId(deviceId);
@@ -1044,6 +1089,7 @@ function DeviceInventoryTable({
   }
 
   return (
+    <Fragment>
     <div className="overflow-x-auto rounded border border-warm">
       <table className="w-full min-w-[1180px] border-collapse text-sm">
         <thead>
@@ -1056,7 +1102,7 @@ function DeviceInventoryTable({
             <th className="px-3 py-2 font-medium">{t("table.onboarding")}</th>
             <th className="px-3 py-2 font-medium">{t("table.baseline")}</th>
             <th className="px-3 py-2 font-medium">{t("table.updated")}</th>
-            {canManage ? <th className="px-3 py-2 font-medium">{t("table.actions")}</th> : null}
+            {(canManage || canCollect) ? <th className="px-3 py-2 font-medium">{t("table.actions")}</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -1109,35 +1155,60 @@ function DeviceInventoryTable({
                   <p className="mt-1">{device.last_config_snapshot ? formatDate(device.last_config_snapshot.collected_at) : "-"}</p>
                 </td>
                 <td className="px-3 py-3 text-xs text-muted">{formatDate(device.updated_at)}</td>
-                {canManage ? (
+                {(canManage || canCollect) ? (
                   <td className="px-3 py-3 text-xs" onClick={(e) => e.stopPropagation()}>
-                    {confirmingId === device.id ? (
-                      <div className="flex items-center gap-1">
-                        <span className="mr-1 text-[11px] font-medium text-red-500">{t("common.confirmDelete")}</span>
+                    <div className="flex items-center gap-1">
+                      {canCollect && (
                         <Button
-                          busy={deletingId === device.id}
-                          onClick={() => void handleDelete(device.id)}
-                          className="h-7 px-2 text-[11px] border-red-400 text-red-500 hover:bg-red-50"
+                          busy={taskBusyId === device.id}
+                          aria-label={t("devices.onboardingActions")}
+                          title={t("devices.onboardingActions")}
+                          onClick={(e) => {
+                            if (taskMenuId === device.id) {
+                              setTaskMenuId(null);
+                              taskTriggerRef.current = null;
+                            } else {
+                              taskTriggerRef.current = e.currentTarget;
+                              setTaskMenuAnchor((e.currentTarget as HTMLElement).getBoundingClientRect());
+                              setTaskMenuId(device.id);
+                            }
+                          }}
+                          className="h-7 px-2 text-[11px] text-muted"
                         >
-                          <CheckCircle className="h-3.5 w-3.5" />
+                          {t("onboarding.connectionLetter")}
+                          <ChevronDown className="h-3 w-3" />
                         </Button>
-                        <Button
-                          onClick={() => setConfirmingId(null)}
-                          className="h-7 px-2 text-[11px]"
-                        >
-                          <XCircle className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        aria-label={t("devices.delete")}
-                        title={t("devices.delete")}
-                        onClick={() => setConfirmingId(device.id)}
-                        className="h-7 w-7 px-0 text-muted hover:border-red-400 hover:text-red-500"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
+                      )}
+                      {canManage && (
+                        confirmingId === device.id ? (
+                          <div className="flex items-center gap-1">
+                            <span className="mr-1 text-[11px] font-medium text-red-500">{t("common.confirmDelete")}</span>
+                            <Button
+                              busy={deletingId === device.id}
+                              onClick={() => void handleDelete(device.id)}
+                              className="h-7 px-2 text-[11px] border-red-400 text-red-500 hover:bg-red-50"
+                            >
+                              <CheckCircle className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              onClick={() => setConfirmingId(null)}
+                              className="h-7 px-2 text-[11px]"
+                            >
+                              <XCircle className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            aria-label={t("devices.delete")}
+                            title={t("devices.delete")}
+                            onClick={() => setConfirmingId(device.id)}
+                            className="h-7 w-7 px-0 text-muted hover:border-red-400 hover:text-red-500"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )
+                      )}
+                    </div>
                   </td>
                 ) : null}
               </tr>
@@ -1146,6 +1217,39 @@ function DeviceInventoryTable({
         </tbody>
       </table>
     </div>
+    {taskMenuId !== null && taskMenuAnchor !== null && createPortal(
+      <div
+        ref={taskMenuRef}
+        style={{
+          position: "fixed",
+          top: taskMenuAnchor.bottom + 4,
+          left: Math.max(4, taskMenuAnchor.right - 184),
+          zIndex: 9999,
+        }}
+        className="min-w-[180px] rounded border border-warm bg-paper shadow-lg"
+      >
+        <button
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ink hover:bg-surface"
+          onClick={() => void runDeviceTask(taskMenuId, "connection")}
+        >
+          {t("devices.runConnectionTest")}
+        </button>
+        <button
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ink hover:bg-surface"
+          onClick={() => void runDeviceTask(taskMenuId, "discovery")}
+        >
+          {t("devices.runDiscovery")}
+        </button>
+        <button
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ink hover:bg-surface"
+          onClick={() => void runDeviceTask(taskMenuId, "snapshot")}
+        >
+          {t("devices.collectSnapshot")}
+        </button>
+      </div>,
+      document.body
+    )}
+    </Fragment>
   );
 }
 
@@ -1230,7 +1334,7 @@ function DeviceWorkspace({
   const [changeTarget, setChangeTarget] = useState<ConfigChangeTarget | null>(null);
   const modeDisabledReason = readyForChange
     ? null
-    : profile?.onboarding_summary?.blockers.join(", ") || t("onboarding.incomplete");
+    : profile?.onboarding_summary?.blockers.map((b) => formatRollbackBlocker(b, t)).join(", ") || t("onboarding.incomplete");
 
   function openConfigChange(target: ConfigChangeTarget) {
     setChangeTarget(target);
@@ -3097,7 +3201,6 @@ function ChangesTab() {
   const [error, setError] = useState<string | null>(null);
 
   const canApprove = hasPermission(PERM.DEVICE_CHANGE_APPROVE);
-  const canExecute = hasPermission(PERM.DEVICE_CHANGE_EXECUTE);
   const canSubmit = hasPermission(PERM.DEVICE_CHANGE_SUBMIT);
 
   const loadChanges = useCallback(async (options: RefreshOptions = {}) => {
@@ -3186,8 +3289,6 @@ function ChangesTab() {
           </p>
         </InfoPanel>
       ) : null}
-      {canExecute && <DirectExecuteForm onSuccess={() => void loadChanges()} />}
-
       {changes.length === 0 && !loading ? (
         <EmptyState icon={<ClipboardList className="h-6 w-6" />} title={t("changes.empty")} />
       ) : null}
@@ -3203,11 +3304,6 @@ function ChangesTab() {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge status={cr.status} />
-                  {cr.direct_execute && (
-                    <span className="rounded bg-warning/20 px-2 py-0.5 font-mono text-[11px] text-warning">
-                      {t("changes.directExecuteBadge")}
-                    </span>
-                  )}
                   {cr.is_rollback && (
                     <span className="rounded bg-info/20 px-2 py-0.5 font-mono text-[11px] text-info flex items-center gap-1">
                       <ListRestart className="h-3 w-3" /> {t("changes.rollbackBadge")}
@@ -3376,7 +3472,7 @@ function ChangeRequestForm({
     });
     setPreflight(result);
     if (!result.passed) {
-      throw new Error(result.blockers.join(", ") || t("changes.preflightFailed"));
+      throw new Error(result.blockers.map((b) => formatRollbackBlocker(b, t)).join(", ") || t("changes.preflightFailed"));
     }
     return result;
   }
@@ -3480,130 +3576,6 @@ function ChangeRequestForm({
           <Send className="h-4 w-4" />
           {preflight?.passed ? t("change.submit") : t("change.preview")}
         </Button>
-      </form>
-    </div>
-  );
-}
-
-function DirectExecuteForm({ onSuccess }: { onSuccess: () => void }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  const [deviceId, setDeviceId] = useState("");
-  const [datastore, setDatastore] = useState("running");
-  const [summary, setSummary] = useState("");
-  const [configBody, setConfigBody] = useState("");
-  const [reason, setReason] = useState("");
-  const [preflight, setPreflight] = useState<ChangePreflightResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setPreflight(null);
-  }, [deviceId, datastore, summary, configBody, reason]);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!reason.trim()) { setError(t("changes.directReasonRequired")); return; }
-    setLoading(true);
-    setError(null);
-    try {
-      if (!preflight?.passed) {
-        const result = await api.previewChangePreflight({
-          device_id: Number(deviceId),
-          datastore,
-          change_summary: summary,
-          config_body: configBody,
-          reason
-        });
-        setPreflight(result);
-        if (!result.passed) throw new Error(result.blockers.join(", ") || t("changes.preflightFailed"));
-        setLoading(false);
-        return;
-      }
-      await api.directExecute({
-        device_id: Number(deviceId),
-        datastore,
-        change_summary: summary,
-        config_body: configBody,
-        reason
-      });
-      setOpen(false);
-      setSummary(""); setConfigBody(""); setReason(""); setDeviceId("");
-      setPreflight(null);
-      onSuccess();
-    } catch (e) {
-      setError(errorMessage(e, t));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  if (!open) {
-    return (
-      <Button onClick={() => setOpen(true)} className="text-sm">
-        <Send className="h-4 w-4" /> {t("changes.directExecute")}
-      </Button>
-    );
-  }
-
-  return (
-    <div className="rounded border border-warm bg-canvas/95 p-4">
-      <h3 className="mb-3 font-semibold text-sm">{t("changes.directExecuteSubtitle")}</h3>
-      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <FieldLabel>{t("changes.deviceId")}</FieldLabel>
-            <input
-              type="number"
-              required
-              value={deviceId}
-              onChange={(e) => setDeviceId(e.target.value)}
-              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <FieldLabel>{t("common.datastore")}</FieldLabel>
-            <DatastoreSelect value={datastore} onValueChange={setDatastore} />
-          </div>
-        </div>
-        <div>
-          <FieldLabel>{t("change.summary")}</FieldLabel>
-          <input
-            type="text"
-            required
-            value={summary}
-            onChange={(e) => setSummary(e.target.value)}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <FieldLabel>{t("changes.configBody")}</FieldLabel>
-          <textarea
-            required
-            value={configBody}
-            onChange={(e) => setConfigBody(e.target.value)}
-            rows={4}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs"
-          />
-        </div>
-        <div>
-          <FieldLabel>{t("change.reason")}</FieldLabel>
-          <textarea
-            required
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows={2}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
-          />
-        </div>
-        {preflight ? <PreflightSummary preflight={preflight} /> : null}
-        {error ? <p className="text-xs text-error">{error}</p> : null}
-        <div className="flex gap-2">
-          <Button type="submit" busy={loading}>
-            {preflight?.passed ? t("changes.execute") : t("change.preview")}
-          </Button>
-          <Button type="button" onClick={() => setOpen(false)} className="bg-paper">{t("common.cancel")}</Button>
-        </div>
       </form>
     </div>
   );
@@ -4183,13 +4155,112 @@ function RolePermissionEditor({
 
 // ── Audit Tab ──────────────────────────────────────────────────────────────
 
+function AuditLogDetailModal({ log, hasFullAudit, onClose }: { log: AuditLogRead; hasFullAudit: boolean; onClose: () => void }) {
+  const t = useT();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/35 p-3 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded border border-warm bg-canvas shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-warm px-4 py-3">
+          <h3 className="font-semibold">{t("audit.detail_title")}</h3>
+          <button onClick={onClose} className="rounded p-1 text-muted hover:bg-paper hover:text-ink">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="overflow-y-auto px-4 py-4 space-y-3 text-sm">
+          <div className="grid grid-cols-[140px_1fr] gap-x-4 gap-y-2">
+            <span className="font-mono text-[11px] uppercase text-muted self-center">{t("audit.time")}</span>
+            <span className="text-xs">{formatDate(log.created_at)}</span>
+            <span className="font-mono text-[11px] uppercase text-muted self-center">{t("audit.action")}</span>
+            <span className="font-mono text-xs">{log.action}</span>
+            <span className="font-mono text-[11px] uppercase text-muted self-center">{t("audit.actor")}</span>
+            <span className="text-xs">
+              {log.actor_username ?? "-"}
+              {log.actor_user_id != null && (
+                <span className="ml-1.5 text-muted">(#{log.actor_user_id})</span>
+              )}
+            </span>
+            <span className="font-mono text-[11px] uppercase text-muted self-center">{t("audit.target")}</span>
+            <span className="text-xs">{log.target_type ?? "-"}</span>
+            <span className="font-mono text-[11px] uppercase text-muted self-center">{t("audit.target_id")}</span>
+            <span className="font-mono text-xs">{log.target_id ?? "-"}</span>
+            <span className="font-mono text-[11px] uppercase text-muted self-center">{t("audit.permission")}</span>
+            <span className="font-mono text-xs">{log.permission ?? "-"}</span>
+            <span className="font-mono text-[11px] uppercase text-muted self-center">{t("audit.outcome")}</span>
+            <span><StatusBadge status={log.outcome} /></span>
+            {hasFullAudit && (
+              <>
+                <span className="font-mono text-[11px] uppercase text-muted self-center">{t("audit.ip_address")}</span>
+                <span className="font-mono text-xs">{log.ip_address ?? "-"}</span>
+              </>
+            )}
+          </div>
+          {hasFullAudit ? (
+            <div className="space-y-1">
+              <p className="font-mono text-[11px] uppercase text-muted">{t("audit.context")}</p>
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-paper p-3 font-mono text-[11px] text-muted">
+                {Object.keys(log.metadata).length > 0 ? JSON.stringify(log.metadata, null, 2) : "{}"}
+              </pre>
+            </div>
+          ) : (
+            <p className="rounded border border-warm bg-paper px-3 py-2 font-mono text-[11px] text-muted">
+              {t("audit.limited_view")}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const AUDIT_OUTCOMES = ["success", "failure", "denied"] as const;
+
 function AuditTab() {
-  const { hasPermission } = useSession();
+  const { hasPermission, user } = useSession();
   const t = useT();
   const [logs, setLogs] = useState<AuditLogRead[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedLog, setSelectedLog] = useState<AuditLogRead | null>(null);
   const hasFullAudit = hasPermission(PERM.AUDIT_READ_FULL);
+
+  // filter state
+  const [filterAction, setFilterAction] = useState("");
+  const [filterActor, setFilterActor] = useState("");
+  const [filterTargetType, setFilterTargetType] = useState("");
+  const [filterOutcome, setFilterOutcome] = useState("");
+  const [filterSince, setFilterSince] = useState("");
+  const [filterUntil, setFilterUntil] = useState("");
+
+  // debounced text values sent to the server
+  const [debouncedAction, setDebouncedAction] = useState("");
+  const [debouncedActor, setDebouncedActor] = useState("");
+  const [debouncedTargetType, setDebouncedTargetType] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedAction(filterAction), 400);
+    return () => clearTimeout(timer);
+  }, [filterAction]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedActor(filterActor), 400);
+    return () => clearTimeout(timer);
+  }, [filterActor]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedTargetType(filterTargetType), 400);
+    return () => clearTimeout(timer);
+  }, [filterTargetType]);
+
+  const hasActiveFilter = filterAction || filterActor || filterTargetType || filterOutcome || filterSince || filterUntil;
+
+  const clearFilters = useCallback(() => {
+    setFilterAction("");
+    setFilterActor("");
+    setFilterTargetType("");
+    setFilterOutcome("");
+    setFilterSince("");
+    setFilterUntil("");
+  }, []);
 
   const loadLogs = useCallback(async (options: RefreshOptions = {}) => {
     if (!options.silent) {
@@ -4197,70 +4268,153 @@ function AuditTab() {
       setError(null);
     }
     try {
-      const resp = await api.listAuditLogs({ limit: 50 });
+      const resp = await api.listAuditLogs({
+        limit: 100,
+        action: debouncedAction.trim() || undefined,
+        actor_username: debouncedActor.trim() || undefined,
+        target_type: debouncedTargetType.trim() || undefined,
+        outcome: filterOutcome || undefined,
+        since: filterSince ? new Date(filterSince).toISOString() : undefined,
+        until: filterUntil ? new Date(filterUntil).toISOString() : undefined,
+      });
       setLogs(resp.items);
     } catch (e) {
       if (!options.silent) setError(errorMessage(e, t));
     } finally {
       if (!options.silent) setLoading(false);
     }
-  }, [t]);
+  }, [t, debouncedAction, debouncedActor, debouncedTargetType, filterOutcome, filterSince, filterUntil]);
 
   useEffect(() => { void loadLogs(); }, [loadLogs]);
   useRealtimeRefresh(() => loadLogs({ silent: true }), REALTIME_NORMAL_REFRESH_MS);
 
+  const inputCls = "h-8 rounded border border-warm bg-canvas px-2 text-xs focus:outline-none focus:ring-1 focus:ring-accent";
+
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
+    <div className="mx-auto max-w-7xl space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{t("audit.title")}</h2>
         <Button onClick={() => void loadLogs()} busy={loading} className="h-9 w-9 px-0">
           <RefreshCw className="h-4 w-4" aria-hidden />
         </Button>
       </div>
+
+      {/* Filter bar */}
+      <div className="rounded border border-warm bg-paper px-3 py-2.5 space-y-2">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1 min-w-[160px]">
+            <label className="font-mono text-[10px] uppercase text-muted">{t("audit.filter.action")}</label>
+            <input
+              className={inputCls}
+              value={filterAction}
+              onChange={(e) => setFilterAction(e.target.value)}
+              placeholder={t("audit.filter.action_placeholder")}
+            />
+          </div>
+          <div className="flex flex-col gap-1 min-w-[140px]">
+            <label className="font-mono text-[10px] uppercase text-muted">{t("audit.filter.actor")}</label>
+            <input
+              className={inputCls}
+              value={filterActor}
+              onChange={(e) => setFilterActor(e.target.value)}
+              placeholder={t("audit.filter.actor_placeholder")}
+            />
+          </div>
+          <div className="flex flex-col gap-1 min-w-[140px]">
+            <label className="font-mono text-[10px] uppercase text-muted">{t("audit.filter.target_type")}</label>
+            <input
+              className={inputCls}
+              value={filterTargetType}
+              onChange={(e) => setFilterTargetType(e.target.value)}
+              placeholder={t("audit.filter.target_type_placeholder")}
+            />
+          </div>
+          <div className="flex flex-col gap-1 min-w-[120px]">
+            <label className="font-mono text-[10px] uppercase text-muted">{t("audit.outcome")}</label>
+            <select
+              className={inputCls + " pr-6"}
+              value={filterOutcome}
+              onChange={(e) => setFilterOutcome(e.target.value)}
+            >
+              <option value="">{t("audit.filter.all")}</option>
+              {AUDIT_OUTCOMES.map((o) => (
+                <option key={o} value={o}>{t(`audit.filter.outcome.${o}`)}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1 min-w-[170px]">
+            <label className="font-mono text-[10px] uppercase text-muted">{t("audit.filter.since")}</label>
+            <input
+              type="datetime-local"
+              className={inputCls}
+              value={filterSince}
+              onChange={(e) => setFilterSince(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1 min-w-[170px]">
+            <label className="font-mono text-[10px] uppercase text-muted">{t("audit.filter.until")}</label>
+            <input
+              type="datetime-local"
+              className={inputCls}
+              value={filterUntil}
+              onChange={(e) => setFilterUntil(e.target.value)}
+            />
+          </div>
+          {hasActiveFilter ? (
+            <button
+              onClick={clearFilters}
+              className="mb-0.5 flex h-8 items-center gap-1.5 rounded border border-warm px-2.5 text-xs text-muted hover:bg-canvas hover:text-ink"
+            >
+              <X className="h-3.5 w-3.5" />
+              {t("audit.filter.clear")}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
       {error ? <ErrorPanel message={error} onRetry={() => void loadLogs()} /> : null}
       {logs.length === 0 && !loading ? (
         <EmptyState icon={<FileClock className="h-6 w-6" />} title={t("audit.empty")} />
       ) : null}
-      <div className="overflow-x-auto rounded border border-warm">
+      <div className="overflow-x-auto rounded border border-warm bg-canvas">
         <table className="w-full min-w-[760px] border-collapse text-sm">
           <thead>
-            <tr className="border-b border-warm text-left font-mono text-[11px] uppercase text-muted">
+            <tr className="border-b border-warm bg-paper text-left font-mono text-[11px] uppercase text-muted">
               <th className="px-3 py-2 font-medium">{t("audit.time")}</th>
               <th className="px-3 py-2 font-medium">{t("audit.action")}</th>
               <th className="px-3 py-2 font-medium">{t("audit.actor")}</th>
               <th className="px-3 py-2 font-medium">{t("audit.target")}</th>
               <th className="px-3 py-2 font-medium">{t("audit.permission")}</th>
               <th className="px-3 py-2 font-medium">{t("audit.outcome")}</th>
-              {hasFullAudit ? <th className="px-3 py-2 font-medium">{t("audit.context")}</th> : null}
             </tr>
           </thead>
           <tbody>
             {logs.map((log) => (
-              <tr key={log.id} className="border-b border-warm/70 last:border-0">
+              <tr
+                key={log.id}
+                className="cursor-pointer border-b border-warm/70 last:border-0 hover:bg-paper/60"
+                onClick={() => setSelectedLog(log)}
+              >
                 <td className="px-3 py-2 text-xs text-muted">{formatDate(log.created_at)}</td>
                 <td className="px-3 py-2 font-mono text-xs">{log.action}</td>
-                <td className="px-3 py-2 text-xs">{log.actor_user_id ?? "-"}</td>
+                <td className="px-3 py-2 text-xs">{log.actor_username ?? log.actor_user_id ?? "-"}</td>
                 <td className="px-3 py-2 text-xs text-muted">{log.target_type ?? "-"}</td>
-                <td className="px-3 py-2 font-mono text-xs text-muted">
-                  {log.permission ?? "-"}
-                </td>
+                <td className="px-3 py-2 font-mono text-xs text-muted">{log.permission ?? "-"}</td>
                 <td className="px-3 py-2">
                   <StatusBadge status={log.outcome} />
                 </td>
-                {hasFullAudit ? (
-                  <td className="max-w-[320px] px-3 py-2">
-                    <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words rounded bg-paper p-2 font-mono text-[11px] text-muted">
-                      {Object.keys(log.metadata).length > 0
-                        ? JSON.stringify(log.metadata, null, 2)
-                        : "{}"}
-                    </pre>
-                  </td>
-                ) : null}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {selectedLog && (
+        <AuditLogDetailModal
+          log={selectedLog}
+          hasFullAudit={hasFullAudit || selectedLog.actor_user_id === user?.id}
+          onClose={() => setSelectedLog(null)}
+        />
+      )}
     </div>
   );
 }
@@ -4788,7 +4942,7 @@ function onboardingSteps(t: TranslateFn, summary: Device["onboarding_summary"]) 
 
 function onboardingDetail(t: TranslateFn, summary: Device["onboarding_summary"]) {
   if (!summary) return t("onboarding.profileUnavailable");
-  if (summary.blockers.length > 0) return summary.blockers.join(", ");
+  if (summary.blockers.length > 0) return summary.blockers.map((b) => formatRollbackBlocker(b, t)).join(", ");
   if (summary.next_action) return summary.next_action.replaceAll("_", " ");
   return summary.ready_for_change
     ? t("onboarding.readyForChange")

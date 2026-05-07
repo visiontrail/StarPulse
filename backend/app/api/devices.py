@@ -72,6 +72,11 @@ def create_device(
         },
     )
     session.commit()
+    if device.connection and device.connection.has_credential:
+        try:
+            TaskService(session).submit_connection_test(device.id, actor_user_id=actor.id)
+        except Exception:
+            pass
     return _device_read(device.id, session)
 
 
@@ -518,7 +523,7 @@ def _onboarding_summary(
         {
             "connection": _step_summary(
                 connection_task,
-                fallback_status="ready" if has_connection and has_credential else "blocked",
+                fallback_status="not_started" if has_connection and has_credential else "blocked",
             ),
             "discovery": _step_summary(
                 discovery_task,

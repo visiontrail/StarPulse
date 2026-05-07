@@ -53,6 +53,7 @@ export type LoginResponse = {
 export type AuditLogRead = {
   id: number;
   actor_user_id: number | null;
+  actor_username: string | null;
   action: string;
   target_type: string | null;
   target_id: string | null;

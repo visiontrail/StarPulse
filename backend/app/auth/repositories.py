@@ -4,7 +4,7 @@ from datetime import datetime
 from hashlib import sha256
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.storage.models import (
     AuditLog,
@@ -260,6 +260,7 @@ class AuditLogRepository:
         self,
         *,
         actor_user_id: int | None = None,
+        actor_username: str | None = None,
         action: str | None = None,
         target_type: str | None = None,
         target_id: str | None = None,
@@ -269,9 +270,11 @@ class AuditLogRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[AuditLog]:
-        q = select(AuditLog).order_by(AuditLog.created_at.desc())
+        q = select(AuditLog).options(selectinload(AuditLog.actor)).order_by(AuditLog.created_at.desc())
         if actor_user_id is not None:
             q = q.where(AuditLog.actor_user_id == actor_user_id)
+        if actor_username:
+            q = q.join(AuditLog.actor).where(User.username.ilike(f"%{actor_username}%"))
         if action:
             q = q.where(AuditLog.action == action)
         if target_type:

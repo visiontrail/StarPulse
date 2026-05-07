@@ -102,6 +102,7 @@ class RolePermissionUpdateRequest(BaseModel):
 class AuditLogRead(BaseModel):
     id: int
     actor_user_id: int | None = None
+    actor_username: str | None = None
     action: str
     target_type: str | None = None
     target_id: str | None = None
@@ -121,12 +122,13 @@ class AuditLogRead(BaseModel):
         return cls(
             id=log.id,
             actor_user_id=log.actor_user_id,
+            actor_username=log.actor.username if log.actor else None,
             action=log.action,
             target_type=log.target_type,
             target_id=log.target_id,
             outcome=log.outcome,
             permission=log.permission,
-            ip_address=log.ip_address,
+            ip_address=None,
             created_at=log.created_at,
             metadata={},
         )
@@ -139,6 +141,7 @@ class AuditLogRead(BaseModel):
         return cls(
             id=log.id,
             actor_user_id=log.actor_user_id,
+            actor_username=log.actor.username if log.actor else None,
             action=log.action,
             target_type=log.target_type,
             target_id=log.target_id,

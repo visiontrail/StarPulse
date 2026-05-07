@@ -20,6 +20,7 @@ def list_audit_logs(
     session: SessionDep,
     user: CurrentUserDep,
     actor_user_id: int | None = Query(default=None),
+    actor_username: str | None = Query(default=None),
     action: str | None = Query(default=None),
     target_type: str | None = Query(default=None),
     target_id: str | None = Query(default=None),
@@ -36,6 +37,7 @@ def list_audit_logs(
 
     logs = AuditLogRepository(session).list_paginated(
         actor_user_id=actor_user_id,
+        actor_username=actor_username,
         action=action,
         target_type=target_type,
         target_id=target_id,
@@ -47,7 +49,7 @@ def list_audit_logs(
     )
 
     items = [
-        AuditLogRead.from_orm_full(log) if has_full else AuditLogRead.from_orm_summary(log)
+        AuditLogRead.from_orm_full(log) if has_full or log.actor_user_id == user.id else AuditLogRead.from_orm_summary(log)
         for log in logs
     ]
     return AuditLogListResponse(items=items, limit=limit, offset=offset)
