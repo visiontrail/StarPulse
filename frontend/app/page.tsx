@@ -29,7 +29,6 @@ import {
   Search,
   Send,
   Settings2,
-  ShieldCheck,
   Sparkles,
   Trash2,
   Users,
@@ -653,7 +652,6 @@ function DevicesTab() {
             submitBusy={submitState === "loading"}
             changeBusy={changeSubmitState === "loading"}
             configTaskRunning={Boolean(configTaskRunning)}
-            lastTask={lastTask}
             changeSummary={changeSummary}
             changeReason={changeReason}
             configBody={configBody}
@@ -693,8 +691,6 @@ function DevicesTab() {
         collapsed={statusCollapsed}
         profile={profile}
         snapshots={snapshots}
-        lastTask={lastTask}
-        configTaskRunning={Boolean(configTaskRunning)}
         canSubmitChange={canSubmitChange}
         canApprove={hasPermission(PERM.DEVICE_CHANGE_APPROVE)}
         deviceId={selectedDevice?.id}
@@ -767,8 +763,6 @@ function DeviceStatusPane({
   collapsed,
   profile,
   snapshots,
-  lastTask,
-  configTaskRunning,
   canSubmitChange,
   canApprove,
   deviceId,
@@ -779,8 +773,6 @@ function DeviceStatusPane({
   collapsed: boolean;
   profile: DeviceProfile | null;
   snapshots: ConfigSnapshot[];
-  lastTask: TaskRead | null;
-  configTaskRunning: boolean;
   canSubmitChange: boolean;
   canApprove: boolean;
   deviceId?: number;
@@ -828,11 +820,6 @@ function DeviceStatusPane({
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-        <ReadOnlyPanel
-          profile={profile}
-          lastTask={lastTask}
-          configTaskRunning={configTaskRunning}
-        />
         <SnapshotTable
           snapshots={snapshots}
           canSubmitChange={canSubmitChange}
@@ -1272,7 +1259,6 @@ function DeviceWorkspace({
   submitBusy,
   changeBusy,
   configTaskRunning,
-  lastTask,
   changeSummary,
   changeReason,
   configBody,
@@ -1304,7 +1290,6 @@ function DeviceWorkspace({
   submitBusy: boolean;
   changeBusy: boolean;
   configTaskRunning: boolean;
-  lastTask: TaskRead | null;
   changeSummary: string;
   changeReason: string;
   configBody: string;
@@ -5540,36 +5525,6 @@ function SnapshotTable({
           ) : null}
         </>
       )}
-    </InfoPanel>
-  );
-}
-
-function ReadOnlyPanel({
-  profile, lastTask, configTaskRunning
-}: { profile: DeviceProfile | null; lastTask: TaskRead | null; configTaskRunning: boolean }) {
-  const t = useT();
-  return (
-    <InfoPanel icon={<ShieldCheck />} title={t("boundary.title")} collapsible contentClassName="max-h-[30dvh] overflow-auto pr-1">
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-2">
-          <Metric label={t("boundary.fullConfig")} value={String(profile?.safety_summary.exposes_full_config ?? false)} />
-          <Metric label={t("boundary.credentials")} value={String(profile?.safety_summary.exposes_credentials ?? false)} />
-        </div>
-        {configTaskRunning ? (
-          <div className="rounded border border-info/20 bg-info/10 p-3 text-sm text-info">
-            {t("boundary.collectionInProgress")}
-          </div>
-        ) : null}
-        {lastTask ? (
-          <div className="rounded border border-warm bg-paper p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <FieldLabel>{t("boundary.lastSubmitted")}</FieldLabel>
-              <StatusBadge status={lastTask.status} />
-            </div>
-            <p className="break-all font-mono text-xs text-muted">{lastTask.task_id}</p>
-          </div>
-        ) : null}
-      </div>
     </InfoPanel>
   );
 }
