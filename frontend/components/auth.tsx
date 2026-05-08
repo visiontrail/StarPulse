@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useSession } from "@/lib/session";
 import { BrandMark } from "@/components/brand";
-import { Button } from "@/components/ui";
+import { NeuralLoginField } from "@/components/neural-login-field";
 import { useT } from "@/lib/i18n";
 import { SUPPORTED_LOCALES, useLocale, type Locale } from "@/lib/i18n";
 import {
@@ -39,50 +39,96 @@ export function LoginView() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <div className="w-full max-w-sm rounded border border-warm bg-canvas/95 p-6 shadow-sm">
-        <div className="mb-6 space-y-4">
-          <BrandMark className="h-11 w-[218px]" />
-          <div>
-            <h1 className="text-lg font-semibold">{t("auth.signIn")}</h1>
-          </div>
+    <div
+      data-theme="dark"
+      className="relative isolate min-h-screen overflow-hidden bg-black text-white"
+    >
+      <NeuralLoginField />
+
+      <div className="pointer-events-none absolute inset-0 z-10 border border-white/10" />
+      <div className="relative z-20 flex min-h-screen min-h-dvh items-center justify-center px-4 py-8 sm:px-6 lg:justify-end lg:px-12 xl:px-20">
+        <div className="absolute left-4 top-4 sm:left-6 sm:top-6">
+          <BrandMark className="h-9 w-[178px] sm:h-10 sm:w-[198px]" />
         </div>
 
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-          <div>
-            <label className="mb-1 block font-mono text-[11px] uppercase text-muted">
-              {t("auth.username")}
-            </label>
-            <input
-              type="text"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              className="w-full rounded border border-warm bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent/50"
-            />
+        <div className="w-full max-w-[392px] border border-transparent bg-[linear-gradient(to_top,rgb(9,9,11),rgba(9,9,11,0.62),rgba(0,0,0,0))] p-px shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
+          <div className="bg-black/72 px-5 py-6 backdrop-blur-xl sm:px-6">
+            <div className="mb-6 grid gap-4">
+              <div className="h-px w-full bg-gradient-to-r from-transparent via-white/35 to-transparent" />
+              <div>
+                <p className="mb-2 font-mono text-[11px] uppercase tracking-[0.18em] text-accent/80">
+                  Star Pulse
+                </p>
+                <h1 className="text-3xl font-semibold leading-none tracking-normal text-white sm:text-[40px]">
+                  {t("auth.signIn")}
+                </h1>
+              </div>
+              <div className="grid grid-cols-[1fr_40px_1fr] items-center gap-3">
+                <div className="h-px bg-white/18" />
+                <div className="h-1 border-x border-accent/70" />
+                <div className="h-px bg-white/18" />
+              </div>
+            </div>
+
+            <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+              <div>
+                <label className="mb-1.5 block font-mono text-[11px] uppercase text-zinc-400">
+                  {t("auth.username")}
+                </label>
+                <input
+                  type="text"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                  className="h-11 w-full rounded-none border border-white/12 bg-white/[0.055] px-3 text-sm text-white caret-accent outline-none transition placeholder:text-zinc-600 focus:border-accent/70 focus:bg-white/[0.08] focus:ring-1 focus:ring-accent/25"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block font-mono text-[11px] uppercase text-zinc-400">
+                  {t("auth.password")}
+                </label>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="h-11 w-full rounded-none border border-white/12 bg-white/[0.055] px-3 text-sm text-white caret-accent outline-none transition placeholder:text-zinc-600 focus:border-accent/70 focus:bg-white/[0.08] focus:ring-1 focus:ring-accent/25"
+                />
+              </div>
+              {error ? (
+                <p className="border border-error/30 bg-error/10 px-3 py-2 text-sm text-error">
+                  {error}
+                </p>
+              ) : null}
+              <button
+                type="submit"
+                disabled={loading}
+                className="group inline-flex h-11 w-full items-center justify-center gap-2 rounded-none border border-white bg-white px-3 text-sm font-semibold text-black transition duration-200 hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                <LogIn
+                  className={cn("h-4 w-4 transition", loading && "animate-pulse")}
+                  aria-hidden="true"
+                />
+                {t("auth.signIn")}
+              </button>
+            </form>
+
+            <div className="mt-5 grid grid-cols-5 gap-1" aria-hidden="true">
+              {Array.from({ length: 15 }).map((_, index) => (
+                <span
+                  key={index}
+                  className={cn(
+                    "h-1 bg-white/10",
+                    index % 4 === 0 && "bg-accent/50",
+                    index % 7 === 0 && "bg-[#4B4BA0]/70"
+                  )}
+                />
+              ))}
+            </div>
           </div>
-          <div>
-            <label className="mb-1 block font-mono text-[11px] uppercase text-muted">
-              {t("auth.password")}
-            </label>
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full rounded border border-warm bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-1 focus:ring-accent/50"
-            />
-          </div>
-          {error ? (
-            <p className="text-sm text-error">{error}</p>
-          ) : null}
-          <Button type="submit" busy={loading} className="w-full justify-center">
-            <LogIn className="h-4 w-4" aria-hidden="true" />
-            {t("auth.signIn")}
-          </Button>
-        </form>
+        </div>
       </div>
     </div>
   );
