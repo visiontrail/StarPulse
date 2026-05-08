@@ -237,9 +237,9 @@ const en = {
 
   // Preflight summary
   "preflight.label": "Preflight",
-  "preflight.current": "Current",
-  "preflight.baseline": "Baseline",
-  "preflight.target": "Target",
+  "preflight.current": "Current snapshot",
+  "preflight.baseline": "Baseline snapshot",
+  "preflight.target": "Target snapshot",
   "preflight.payload": "Payload",
   "preflight.payloadBytes": "{count} bytes",
   "preflight.risk": "Risk",

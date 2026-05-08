@@ -378,7 +378,8 @@ def _collect_yang_blocks(
         close_index = _find_matching_brace(text, open_index) if opener == "{" else -1
         body = text[open_index + 1 : close_index] if close_index > open_index else ""
         path = f"{parent_path}/{name}" if parent_path else f"/{name}"
-        config = _parse_bool_statement(body, "config")
+        direct = _direct_body_text(body)
+        config = _parse_bool_statement(direct, "config")
         if config is None:
             config = inherited_config
         node = {
@@ -405,7 +406,7 @@ def _collect_yang_blocks(
                 else None
             ),
             "mandatory": (
-                _parse_bool_statement(body, "mandatory") if kind in {"leaf", "leaf-list"} else None
+                _parse_bool_statement(direct, "mandatory") if kind in {"leaf", "leaf-list"} else None
             ),
             "config": config,
             "status": _match(body, r"\bstatus\s+([-\w]+)\s*;"),
@@ -474,6 +475,21 @@ def _parse_enums(body: str) -> list[dict[str, object]]:
 
 def _parse_type_arg(body: str, argument: str) -> str | None:
     return _match(body, rf"\b{argument}\s+\"?([^;\"']+)\"?\s*;")
+
+
+def _direct_body_text(body: str) -> str:
+    # Strips nested {} blocks so only top-level statements are visible.
+    # Prevents a child node's "config false;" from polluting the parent's lookup.
+    result: list[str] = []
+    depth = 0
+    for ch in body:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif depth == 0:
+            result.append(ch)
+    return "".join(result)
 
 
 def _parse_bool_statement(body: str, field: str) -> bool | None:

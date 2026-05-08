@@ -239,9 +239,9 @@ const es: Dict = {
 
   // Preflight summary
   "preflight.label": "Preverificación",
-  "preflight.current": "Actual",
-  "preflight.baseline": "Base",
-  "preflight.target": "Objetivo",
+  "preflight.current": "Instantánea actual",
+  "preflight.baseline": "Instantánea de línea base",
+  "preflight.target": "Instantánea objetivo",
   "preflight.payload": "Carga",
   "preflight.payloadBytes": "{count} bytes",
   "preflight.risk": "Riesgo",

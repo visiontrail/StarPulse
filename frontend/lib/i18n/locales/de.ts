@@ -239,9 +239,9 @@ const de: Dict = {
 
   // Preflight summary
   "preflight.label": "Preflight",
-  "preflight.current": "Aktuell",
-  "preflight.baseline": "Baseline",
-  "preflight.target": "Ziel",
+  "preflight.current": "Aktueller Snapshot",
+  "preflight.baseline": "Baseline-Snapshot",
+  "preflight.target": "Ziel-Snapshot",
   "preflight.payload": "Payload",
   "preflight.payloadBytes": "{count} Bytes",
   "preflight.risk": "Risiko",

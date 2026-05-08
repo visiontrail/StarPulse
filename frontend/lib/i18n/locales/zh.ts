@@ -239,9 +239,9 @@ const zh: Dict = {
 
   // Preflight summary
   "preflight.label": "预检",
-  "preflight.current": "当前",
-  "preflight.baseline": "基线",
-  "preflight.target": "目标",
+  "preflight.current": "当前快照",
+  "preflight.baseline": "基线快照",
+  "preflight.target": "目标快照",
   "preflight.payload": "负载",
   "preflight.payloadBytes": "{count} 字节",
   "preflight.risk": "风险",

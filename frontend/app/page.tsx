@@ -2124,7 +2124,7 @@ function ConfigChangeDialog({
           <Metric label="内部请求大小" value={`${configBody.length} bytes`} />
         </div>
       </div>
-      {preflight ? <PreflightSummary preflight={preflight} compact /> : null}
+      {preflight ? <PreflightSummary preflight={preflight} /> : null}
       {!canSubmitChange ? <p className="text-xs text-warn">{t("change.requireSubmitPerm")}</p> : null}
       {disabledReason ? <p className="text-xs text-warn">{disabledReason}</p> : null}
     </>
@@ -3087,8 +3087,22 @@ function parseYangTypeArgument(body: string, argument: "range" | "length" | "pat
   return matchYangString(body, regex);
 }
 
+function directBodyText(body: string): string {
+  // Strips nested {} blocks so only top-level statements are visible.
+  // Prevents a child node's "config false;" from being mistaken for the parent's.
+  let result = "";
+  let depth = 0;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "{") { depth++; continue; }
+    if (ch === "}") { depth--; continue; }
+    if (depth === 0) result += ch;
+  }
+  return result;
+}
+
 function parseYangBoolean(body: string, field: "mandatory" | "config"): boolean | undefined {
-  const raw = matchYangString(body, new RegExp(`\\b${field}\\s+(true|false)\\s*;`));
+  const raw = matchYangString(directBodyText(body), new RegExp(`\\b${field}\\s+(true|false)\\s*;`));
   return raw === undefined ? undefined : raw === "true";
 }
 
@@ -4003,7 +4017,7 @@ function ChangesTab() {
                   <Metric label={t("changes.execution")} value={cr.execution_task_id ?? "-"} />
                   <Metric label={t("changes.verification")} value={cr.verification_status ?? "-"} />
                 </div>
-                <PreflightSummary preflight={changePreflightFromRequest(cr)} compact />
+                <PreflightSummary preflight={changePreflightFromRequest(cr)} />
                 {cr.verification_summary ? (
                   <p className="mt-2 text-xs text-muted">
                     {String(cr.verification_summary.error_message ?? "") ||
@@ -5300,13 +5314,7 @@ function CreateDeviceForm({ onSuccess }: { onSuccess: (deviceId: number) => Prom
   );
 }
 
-function PreflightSummary({
-  preflight,
-  compact = false
-}: {
-  preflight: ChangePreflightResponse | null;
-  compact?: boolean;
-}) {
+function PreflightSummary({ preflight }: { preflight: ChangePreflightResponse | null }) {
   const t = useT();
   if (!preflight) return null;
   return (
@@ -5315,17 +5323,17 @@ function PreflightSummary({
         <FieldLabel>{t("preflight.label")}</FieldLabel>
         <StatusBadge status={preflight.passed ? "passed" : "failed"} />
       </div>
-      <div className={cn("mt-2 grid gap-2 text-xs", compact ? "" : "sm:grid-cols-2")}>
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-5 gap-y-2 text-xs">
         <Metric
+          inline
           label={preflight.mode === "rollback" ? t("preflight.current") : t("preflight.baseline")}
-          value={preflight.baseline_snapshot?.id ?? "-"}
+          value={digestShort(preflight.baseline_snapshot?.content_digest)}
         />
         {preflight.mode === "rollback" ? (
-          <Metric label={t("preflight.target")} value={preflight.rollback_target_snapshot?.id ?? "-"} />
+          <Metric inline label={t("preflight.target")} value={digestShort(preflight.rollback_target_snapshot?.content_digest)} />
         ) : null}
-        <Metric label={t("preflight.payload")} value={preflight.payload ? t("preflight.payloadBytes", { count: preflight.payload.length }) : "-"} />
-        <Metric label={t("preflight.risk")} value={preflight.risk_summary?.risk_level ?? "-"} />
-        <Metric label={t("preflight.digest")} value={digestShort(preflight.payload?.digest)} />
+        <Metric inline label={t("preflight.risk")} value={preflight.risk_summary?.risk_level ?? "-"} />
+        <Metric inline label="DIGEST" value={digestShort(preflight.payload?.digest)} />
       </div>
       {preflight.blockers.length > 0 ? (
         <p className="mt-2 text-xs text-error">
@@ -5596,7 +5604,23 @@ function InfoPanel({ icon, title, children, collapsible = false, defaultOpen = t
   );
 }
 
-function Metric({ label, value }: { label: string; value: React.ReactNode }) {
+function Metric({
+  label,
+  value,
+  inline = false
+}: {
+  label: string;
+  value: React.ReactNode;
+  inline?: boolean;
+}) {
+  if (inline) {
+    return (
+      <div className="inline-flex max-w-full min-w-0 items-baseline gap-2">
+        <FieldLabel>{label}</FieldLabel>
+        <span className="min-w-0 truncate font-mono text-sm text-ink">{value}</span>
+      </div>
+    );
+  }
   return (
     <div className="min-w-0">
       <FieldLabel>{label}</FieldLabel>

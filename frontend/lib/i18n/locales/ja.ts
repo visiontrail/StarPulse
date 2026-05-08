@@ -239,9 +239,9 @@ const ja: Dict = {
 
   // Preflight summary
   "preflight.label": "プリフライト",
-  "preflight.current": "現在",
-  "preflight.baseline": "ベースライン",
-  "preflight.target": "対象",
+  "preflight.current": "現在のスナップショット",
+  "preflight.baseline": "ベースラインスナップショット",
+  "preflight.target": "対象スナップショット",
   "preflight.payload": "ペイロード",
   "preflight.payloadBytes": "{count} バイト",
   "preflight.risk": "リスク",
