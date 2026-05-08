@@ -1341,7 +1341,7 @@ function DeviceWorkspace({
     setChangeTarget(target);
     onChangeSummaryChange(defaultConfigChangeSummary(target));
     onChangeReasonChange("");
-    onConfigBodyChange(buildConfigChangePayload(target.action, target.path, target.currentValue));
+    onConfigBodyChange(buildNetconfPayload(target.action, target.path, target.currentValue, configTree, yangSchemaIndex));
   }
 
   return (
@@ -1455,6 +1455,8 @@ function DeviceWorkspace({
               changeReason={changeReason}
               configBody={configBody}
               preflight={preflight}
+              configData={configTree}
+              schemaIndex={yangSchemaIndex}
               onChangeSummaryChange={onChangeSummaryChange}
               onChangeReasonChange={onChangeReasonChange}
               onConfigBodyChange={onConfigBodyChange}
@@ -2034,6 +2036,8 @@ function ConfigChangeDialog({
   changeReason,
   configBody,
   preflight,
+  configData,
+  schemaIndex,
   onChangeSummaryChange,
   onChangeReasonChange,
   onConfigBodyChange,
@@ -2051,6 +2055,8 @@ function ConfigChangeDialog({
   changeReason: string;
   configBody: string;
   preflight: ChangePreflightResponse | null;
+  configData: Record<string, unknown>;
+  schemaIndex: YangSchemaIndex;
   onChangeSummaryChange: (value: string) => void;
   onChangeReasonChange: (value: string) => void;
   onConfigBodyChange: (value: string) => void;
@@ -2070,11 +2076,10 @@ function ConfigChangeDialog({
   }, [target]);
 
   function updateGeneratedPayload(path: string, value: string) {
-    if (target.action === "delete-leaf" || target.action === "delete-instance") {
-      onConfigBodyChange(buildConfigChangePayload(target.action, path, target.currentValue));
-      return;
-    }
-    onConfigBodyChange(buildConfigChangePayload(target.action, path, value));
+    const effectiveValue = (target.action === "delete-leaf" || target.action === "delete-instance")
+      ? target.currentValue
+      : value;
+    onConfigBodyChange(buildNetconfPayload(target.action, path, effectiveValue, configData, schemaIndex));
   }
 
   return (
@@ -3462,17 +3467,137 @@ function configChangeActionLabel(action: ConfigChangeAction) {
   }
 }
 
-function buildConfigChangePayload(action: ConfigChangeAction, path: string, value: unknown) {
+function buildNetconfPayload(
+  action: ConfigChangeAction,
+  path: string,
+  value: unknown,
+  data: Record<string, unknown>,
+  schemaIndex: YangSchemaIndex
+): string {
+  const NC_NS = "urn:ietf:params:xml:ns:netconf:base:1.0";
   const operation =
-    action === "delete-leaf" || action === "delete-instance"
-      ? "delete"
-      : action === "add-leaf" || action === "add-instance"
-        ? "create"
-        : "replace";
-  const body = operation === "delete"
-    ? ""
-    : `\n  <value>${escapeXmlText(formatTreeValue(value))}</value>\n`;
-  return `<config-change operation="${operation}" path="${escapeXmlAttribute(path)}">${body}</config-change>`;
+    action === "delete-leaf" || action === "delete-instance" ? "delete" :
+    action === "add-leaf" || action === "add-instance" ? "create" :
+    "replace";
+
+  const isNewInstance = path.endsWith(".*");
+  const effectivePath = isNewInstance ? path.slice(0, -2) : path;
+  const rawSegments = effectivePath.split(".");
+
+  type XmlSeg = {
+    name: string;
+    namespace?: string;
+    isListInstance: boolean;
+    listKeys: Array<{ key: string; value: string }>;
+  };
+
+  const xmlSegs: XmlSeg[] = [];
+  let currentData: unknown = data;
+  let inheritedNamespace: string | null = null;
+  const startIdx = rawSegments[0] === "root" ? 1 : 0;
+
+  for (let i = startIdx; i < rawSegments.length; i++) {
+    const seg = rawSegments[i];
+    if (seg === "data" || seg === "rpc-reply") {
+      if (currentData && typeof currentData === "object" && !Array.isArray(currentData))
+        currentData = (currentData as Record<string, unknown>)[seg];
+      continue;
+    }
+    if (/^\d+$/.test(seg)) {
+      const idx = parseInt(seg);
+      const prevSeg = xmlSegs[xmlSegs.length - 1];
+      if (prevSeg && Array.isArray(currentData)) {
+        prevSeg.isListInstance = true;
+        const instance = (currentData as unknown[])[idx];
+        const listPath = rawSegments.slice(startIdx, i).join(".");
+        const listSchema = matchYangListNode(schemaIndex, listPath, data);
+        const keyNames = yangListKeyNames(listSchema);
+        if (instance && typeof instance === "object" && !Array.isArray(instance)) {
+          const inst = instance as Record<string, unknown>;
+          for (const k of keyNames) {
+            prevSeg.listKeys.push({ key: k, value: String(inst[k] ?? "") });
+          }
+          if (prevSeg.listKeys.length === 0) {
+            for (const fallback of ["name", "id", "address", "prefix"]) {
+              if (fallback in inst) { prevSeg.listKeys.push({ key: fallback, value: String(inst[fallback] ?? "") }); break; }
+            }
+          }
+        }
+        currentData = instance;
+      }
+      continue;
+    }
+    const childData = (currentData && typeof currentData === "object" && !Array.isArray(currentData))
+      ? (currentData as Record<string, unknown>)[seg]
+      : undefined;
+    let elementNamespace: string | undefined;
+    if (childData && typeof childData === "object" && !Array.isArray(childData)) {
+      const ns = (childData as Record<string, unknown>)["_namespace"] as string | undefined;
+      if (ns && ns !== inheritedNamespace) { elementNamespace = ns; inheritedNamespace = ns; }
+    }
+    xmlSegs.push({ name: seg, namespace: elementNamespace, isListInstance: false, listKeys: [] });
+    currentData = childData;
+  }
+
+  if (xmlSegs.length === 0) return `<config xmlns="${NC_NS}"/>`;
+
+  const parts: string[] = [`<config xmlns="${NC_NS}">`];
+  for (let i = 0; i < xmlSegs.length; i++) {
+    const seg = xmlSegs[i];
+    const isLast = i === xmlSegs.length - 1;
+    const nsDecl = seg.namespace ? ` xmlns="${escapeXmlAttribute(seg.namespace)}"` : "";
+
+    if (isLast) {
+      const ncOp = ` xmlns:nc="${NC_NS}" nc:operation="${operation}"`;
+      if (isNewInstance) {
+        const obj = _parseObjectValue(value);
+        parts.push(`<${seg.name}${nsDecl}${ncOp}>`);
+        for (const [k, v] of Object.entries(obj)) {
+          if (!k.startsWith("_")) parts.push(`<${k}>${escapeXmlText(String(v ?? ""))}</${k}>`);
+        }
+        parts.push(`</${seg.name}>`);
+      } else if (seg.isListInstance) {
+        parts.push(`<${seg.name}${nsDecl}${ncOp}>`);
+        for (const { key, value: kv } of seg.listKeys)
+          parts.push(`<${key}>${escapeXmlText(kv)}</${key}>`);
+        if (operation === "replace") {
+          const obj = _parseObjectValue(value);
+          const keyNames = seg.listKeys.map(lk => lk.key);
+          for (const [k, v] of Object.entries(obj)) {
+            if (!k.startsWith("_") && !keyNames.includes(k))
+              parts.push(`<${k}>${escapeXmlText(String(v ?? ""))}</${k}>`);
+          }
+        }
+        parts.push(`</${seg.name}>`);
+      } else {
+        if (operation === "delete") {
+          parts.push(`<${seg.name}${nsDecl}${ncOp}/>`);
+        } else {
+          parts.push(`<${seg.name}${nsDecl}${ncOp}>${escapeXmlText(String(value ?? ""))}</${seg.name}>`);
+        }
+      }
+    } else {
+      parts.push(`<${seg.name}${nsDecl}>`);
+      if (seg.isListInstance) {
+        for (const { key, value: kv } of seg.listKeys)
+          parts.push(`<${key}>${escapeXmlText(kv)}</${key}>`);
+      }
+    }
+  }
+  for (let i = xmlSegs.length - 2; i >= 0; i--) parts.push(`</${xmlSegs[i].name}>`);
+  parts.push("</config>");
+  return parts.join("");
+}
+
+function _parseObjectValue(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      const p = JSON.parse(value);
+      if (p && typeof p === "object" && !Array.isArray(p)) return p as Record<string, unknown>;
+    } catch { /* not JSON */ }
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  return {};
 }
 
 function escapeXmlText(value: string) {

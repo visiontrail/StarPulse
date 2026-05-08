@@ -177,7 +177,7 @@ def _map_exception(exc: Exception, params: NetconfConnectionParams) -> Exception
             code=DeviceAccessErrorCode.AUTH_FAILED,
             context=context,
         )
-    if any(marker in name for marker in ("rpc", "hello", "capabil", "protocol")):
+    if any(marker in name for marker in ("rpc", "hello", "capabil", "protocol", "xml")):
         return NetconfProtocolError(
             "NETCONF protocol error",
             code=DeviceAccessErrorCode.NETCONF_PROTOCOL_ERROR,
