@@ -2082,7 +2082,9 @@ function ConfigChangeDialog({
       <div className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded border border-warm bg-canvas shadow-2xl">
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-warm px-4 py-3">
           <div className="min-w-0">
-            <p className="font-mono text-[11px] uppercase text-muted">{configChangeActionLabel(target.action)}</p>
+            <p className="font-mono text-[11px] text-muted">
+              {`${configChangeActionLabel(target.action)} | 目标设备:${device.name || `#${device.id}`} | 目标数据库:${datastore}`}
+            </p>
             <h3 className="mt-1 truncate text-lg font-semibold">{t("change.controlTitle")}</h3>
             <p className="mt-1 truncate font-mono text-xs text-muted" title={target.path}>
               {target.path}
@@ -2094,22 +2096,9 @@ function ConfigChangeDialog({
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 py-3">
-          <div className="grid grid-cols-2 gap-3">
-            <Metric label={t("common.device")} value={`#${device.id}`} />
-            <Metric label={t("common.datastore")} value={datastore} />
-          </div>
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-            <div>
-              <FieldLabel>YANG 类型</FieldLabel>
-              <div className="mt-1 min-h-9 rounded border border-warm bg-paper px-2 py-1.5">
-                <p className="truncate font-mono text-xs text-ink">
-                  {displayYangType(target.schema, target.currentValue)}
-                </p>
-                <p className="mt-0.5 truncate font-mono text-[10px] text-muted" title={yangNodePathLabel(target.schema)}>
-                  {yangNodePathLabel(target.schema)}
-                </p>
-              </div>
-            </div>
+          <div>
+            <FieldLabel>YANG 节点信息</FieldLabel>
+            <YangSchemaPanel schema={target.schema} currentValue={target.currentValue} />
           </div>
           <TypedYangValueEditor
             action={target.action}
@@ -2233,7 +2222,6 @@ function TypedYangValueEditor({
             </option>
           ))}
         </select>
-        <YangInputHint schema={schema} />
       </div>
     );
   }
@@ -2257,7 +2245,6 @@ function TypedYangValueEditor({
             </button>
           ))}
         </div>
-        <YangInputHint schema={schema} />
       </div>
     );
   }
@@ -2289,7 +2276,6 @@ function TypedYangValueEditor({
           onChange={(event) => onChange(event.target.value)}
           className="mt-1 h-9 w-full rounded border border-warm bg-paper px-2 font-mono text-sm outline-none focus:border-warm-strong"
         />
-        <YangInputHint schema={schema} />
       </div>
     );
   }
@@ -2302,28 +2288,86 @@ function TypedYangValueEditor({
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 h-9 w-full rounded border border-warm bg-paper px-2 font-mono text-sm outline-none focus:border-warm-strong"
       />
-      <YangInputHint schema={schema} />
     </div>
   );
 }
 
-function YangInputHint({ schema }: { schema?: YangNodeInfo | null }) {
-  const badges = yangConstraintBadges(schema);
-  if (!schema && badges.length === 0) {
-    return <p className="mt-1 text-xs text-muted">未匹配到 get-schema 节点定义，按当前值类型兜底。</p>;
+function YangSchemaPanel({ schema, currentValue }: { schema?: YangNodeInfo | null; currentValue?: unknown }) {
+  const type = displayYangType(schema, currentValue);
+  const baseType = schema?.base_type;
+  const showBase = baseType && baseType.replace(/^.*:/, "").toLowerCase() !== type.replace(/^.*:/, "").toLowerCase();
+  const typeDisplay = showBase ? `${type} (${baseType})` : type;
+
+  type AttrRow = { label: string; value: string; mono?: boolean; wide?: boolean };
+  const rows: AttrRow[] = [];
+
+  rows.push({ label: "数据类型", value: typeDisplay, mono: true });
+
+  const kindRaw = schema?.kind ?? schema?.node_type;
+  if (kindRaw) rows.push({ label: "节点类型", value: kindRaw });
+
+  if (schema?.mandatory !== undefined)
+    rows.push({ label: "必须填写", value: schema.mandatory ? "是" : "否" });
+
+  if (schema?.config !== undefined)
+    rows.push({ label: "可配置", value: schema.config ? "是" : "只读" });
+
+  if (schema?.status)
+    rows.push({ label: "YANG 状态", value: schema.status });
+
+  if (schema?.units)
+    rows.push({ label: "单位", value: schema.units });
+
+  if (schema?.default !== undefined && schema?.default !== null)
+    rows.push({ label: "默认值", value: formatTreeValue(schema.default), mono: true });
+
+  if (schema?.range)
+    rows.push({ label: "取值范围", value: schema.range, mono: true });
+
+  if (schema?.length)
+    rows.push({ label: "长度限制", value: schema.length, mono: true });
+
+  if (schema?.pattern)
+    rows.push({ label: "正则模式", value: schema.pattern, mono: true, wide: true });
+
+  if (schema?.leafref_path)
+    rows.push({ label: "leafref 路径", value: schema.leafref_path, mono: true, wide: true });
+
+  const enumOpts = yangEnumOptions(schema);
+  if (enumOpts.length > 0)
+    rows.push({ label: `枚举选项 (${enumOpts.length})`, value: enumOpts.map((o) => o.name).join(" | "), mono: true, wide: true });
+
+  if (schema?.key) {
+    const keyStr = Array.isArray(schema.key) ? schema.key.join(" ") : String(schema.key);
+    rows.push({ label: "列表键", value: keyStr, mono: true });
   }
+
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
-      {badges.map((badge) => (
-        <span key={badge} className="rounded border border-warm bg-paper px-1.5 font-mono text-[10px] text-muted">
-          {badge}
-        </span>
-      ))}
+    <div className="mt-1 rounded border border-warm bg-paper px-2 py-2">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+        {rows.map(({ label, value, mono, wide }) => (
+          <div key={label} className={`flex min-w-0 flex-col${wide ? " col-span-2" : ""}`}>
+            <span className="mb-0.5 text-[9px] uppercase tracking-wide text-muted">{label}</span>
+            <span
+              className={`truncate text-[10px] text-ink${mono ? " font-mono" : ""}`}
+              title={value}
+            >
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
       {schema?.description ? (
-        <span className="min-w-0 flex-1 truncate text-xs text-muted" title={schema.description}>
-          {schema.description}
-        </span>
+        <div className="mt-2 border-t border-warm pt-2">
+          <p className="mb-1 text-[9px] uppercase tracking-wide text-muted">节点描述</p>
+          <div className="max-h-28 overflow-auto rounded border border-warm/60 bg-canvas/60 px-2 py-1.5 text-[11px] leading-5 text-muted">
+            {schema.description}
+          </div>
+        </div>
       ) : null}
+      {!schema && (
+        <p className="mt-1 text-[10px] text-muted">未匹配到 get-schema 节点定义</p>
+      )}
     </div>
   );
 }
