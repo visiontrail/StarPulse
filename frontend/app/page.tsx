@@ -2059,14 +2059,12 @@ function ConfigChangeDialog({
   onSubmit: () => void;
 }) {
   const t = useT();
-  const [targetPath, setTargetPath] = useState(target.path);
   const [targetValue, setTargetValue] = useState(formatTreeValue(target.currentValue));
   const blocked = !canSubmitChange || Boolean(disabledReason);
   const isDeleteAction = target.action === "delete-leaf" || target.action === "delete-instance";
   const missingRequired = !changeSummary.trim() || !changeReason.trim() || (!isDeleteAction && !configBody.trim());
 
   useEffect(() => {
-    setTargetPath(target.path);
     const nextValue = formatInputValueForSchema(target.currentValue, target.schema);
     setTargetValue(nextValue);
   }, [target]);
@@ -2086,7 +2084,9 @@ function ConfigChangeDialog({
           <div className="min-w-0">
             <p className="font-mono text-[11px] uppercase text-muted">{configChangeActionLabel(target.action)}</p>
             <h3 className="mt-1 truncate text-lg font-semibold">{t("change.controlTitle")}</h3>
-            <p className="mt-1 truncate font-mono text-xs text-muted">{target.label}</p>
+            <p className="mt-1 truncate font-mono text-xs text-muted" title={target.path}>
+              {target.path}
+            </p>
           </div>
           <Button aria-label={t("common.cancel")} title={t("common.cancel")} onClick={onClose} className="h-8 w-8 bg-paper px-0">
             <XCircle className="h-4 w-4" aria-hidden />
@@ -2099,17 +2099,6 @@ function ConfigChangeDialog({
             <Metric label={t("common.datastore")} value={datastore} />
           </div>
           <div className="grid gap-3 md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-            <div>
-              <FieldLabel>目标路径</FieldLabel>
-              <input
-                value={targetPath}
-                onChange={(event) => {
-                  setTargetPath(event.target.value);
-                  updateGeneratedPayload(event.target.value, targetValue);
-                }}
-                className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
-              />
-            </div>
             <div>
               <FieldLabel>YANG 类型</FieldLabel>
               <div className="mt-1 min-h-9 rounded border border-warm bg-paper px-2 py-1.5">
@@ -2129,7 +2118,7 @@ function ConfigChangeDialog({
             currentValue={target.currentValue}
             onChange={(value) => {
               setTargetValue(value);
-              updateGeneratedPayload(targetPath, value);
+              updateGeneratedPayload(target.path, value);
             }}
           />
           <div>
