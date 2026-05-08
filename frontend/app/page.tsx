@@ -1426,13 +1426,13 @@ function DeviceWorkspace({
 
       {detailMode === "operational" ? (
         <div className="min-h-0 flex-1 overflow-auto p-3">
-          <InfoPanel icon={<Settings2 />} title={t("workspace.netconfTree")}>
-            <ObjectTree
-              data={operationalTree}
-              selectedPath={selectedPath}
-              onSelectPath={onSelectPath}
-            />
-          </InfoPanel>
+          <ConfigModelWorkspace
+            data={operationalTree}
+            schemaIndex={yangSchemaIndex}
+            selectedPath={selectedPath}
+            treeTitle={t("workspace.netconfTree")}
+            onSelectPath={onSelectPath}
+          />
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -1440,6 +1440,7 @@ function DeviceWorkspace({
             data={configTree}
             schemaIndex={yangSchemaIndex}
             selectedPath={selectedPath}
+            treeTitle={t("workspace.configTree")}
             onSelectPath={onSelectPath}
             onOpenChange={openConfigChange}
           />
@@ -1475,16 +1476,19 @@ function ConfigModelWorkspace({
   data,
   schemaIndex,
   selectedPath,
+  treeTitle,
   onSelectPath,
   onOpenChange
 }: {
   data: Record<string, unknown>;
   schemaIndex: YangSchemaIndex;
   selectedPath: string;
+  treeTitle: string;
   onSelectPath: (path: string) => void;
-  onOpenChange: (target: ConfigChangeTarget) => void;
+  onOpenChange?: (target: ConfigChangeTarget) => void;
 }) {
   const t = useT();
+  const canEdit = Boolean(onOpenChange);
   const [treeOpenPaths, setTreeOpenPaths] = useState<Set<string>>(() => new Set(["root", "root.data"]));
   const [treeWidth, setTreeWidth] = useState(300);
   const userResizedRef = useRef(false);
@@ -1561,8 +1565,11 @@ function ConfigModelWorkspace({
   );
   const hasYangModel = schemaIndex.byPath.size + schemaIndex.byNamespacePath.size > 0;
   const allLeafRows = useMemo(
-    () => (isMultiInstance ? leafRows : collectAllLeafRows(effectiveValue, effectivePath, data, schemaIndex)),
-    [data, effectivePath, effectiveValue, schemaIndex, isMultiInstance, leafRows]
+    () => {
+      if (isMultiInstance || !canEdit) return leafRows;
+      return collectAllLeafRows(effectiveValue, effectivePath, data, schemaIndex);
+    },
+    [canEdit, data, effectivePath, effectiveValue, schemaIndex, isMultiInstance, leafRows]
   );
   const schemaLeafCount = useMemo(() => {
     const normEffPath = normalizeUiPath(effectivePath);
@@ -1581,7 +1588,7 @@ function ConfigModelWorkspace({
       <div style={{ width: treeWidth, minWidth: 200, flexShrink: 0 }}>
         <InfoPanel
           icon={<Settings2 />}
-          title={t("workspace.configTree")}
+          title={treeTitle}
           className="h-full"
           headerActions={
             <div className="flex gap-0.5">
@@ -1644,11 +1651,11 @@ function ConfigModelWorkspace({
               : <XCircle className="h-3 w-3" aria-hidden />}
             {hasYangModel ? "已关联" : "未关联"}
           </span>
-          {isMultiInstance ? (
+          {canEdit && isMultiInstance ? (
             <Button
               className="h-7 px-2 text-xs"
               onClick={() =>
-                onOpenChange({
+                onOpenChange?.({
                   action: "add-instance",
                   path: `${effectivePath}.*`,
                   label: "新增实例",
@@ -1678,9 +1685,10 @@ function ListInstanceTable({
   onOpenChange
 }: {
   table: ConfigListTable;
-  onOpenChange: (target: ConfigChangeTarget) => void;
+  onOpenChange?: (target: ConfigChangeTarget) => void;
 }) {
   const t = useT();
+  const canEdit = Boolean(onOpenChange);
 
   return (
     <div className="min-w-0 max-w-full overflow-auto rounded border border-warm bg-paper/70">
@@ -1702,7 +1710,9 @@ function ListInstanceTable({
                 </span>
               </th>
             ))}
-            <th className="min-w-20 px-3 py-2 text-right font-medium">{t("table.actions")}</th>
+            {canEdit ? (
+              <th className="min-w-20 px-3 py-2 text-right font-medium">{t("table.actions")}</th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
@@ -1730,47 +1740,49 @@ function ListInstanceTable({
                   </td>
                 );
               })}
-              <td className="px-3 py-2">
-                <div className="flex justify-end gap-1.5">
-                  <Button
-                    aria-label={`编辑实例 ${row.label}`}
-                    title="编辑实例"
-                    className="h-8 w-8 bg-canvas px-0"
-                    onClick={() =>
-                      onOpenChange({
-                        action: "edit-instance",
-                        path: row.path,
-                        label: `编辑实例 ${row.label}`,
-                        currentValue: row.value,
-                        schema: null
-                      })
-                    }
-                  >
-                    <FilePenLine className="h-3.5 w-3.5" aria-hidden />
-                  </Button>
-                  <Button
-                    aria-label={`删除实例 ${row.label}`}
-                    title="删除实例"
-                    className="h-8 w-8 bg-canvas px-0 text-error"
-                    onClick={() =>
-                      onOpenChange({
-                        action: "delete-instance",
-                        path: row.path,
-                        label: `删除实例 ${row.label}`,
-                        currentValue: row.value,
-                        schema: null
-                      })
-                    }
-                  >
-                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                  </Button>
-                </div>
-              </td>
+              {canEdit ? (
+                <td className="px-3 py-2">
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      aria-label={`编辑实例 ${row.label}`}
+                      title="编辑实例"
+                      className="h-8 w-8 bg-canvas px-0"
+                      onClick={() =>
+                        onOpenChange?.({
+                          action: "edit-instance",
+                          path: row.path,
+                          label: `编辑实例 ${row.label}`,
+                          currentValue: row.value,
+                          schema: null
+                        })
+                      }
+                    >
+                      <FilePenLine className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                    <Button
+                      aria-label={`删除实例 ${row.label}`}
+                      title="删除实例"
+                      className="h-8 w-8 bg-canvas px-0 text-error"
+                      onClick={() =>
+                        onOpenChange?.({
+                          action: "delete-instance",
+                          path: row.path,
+                          label: `删除实例 ${row.label}`,
+                          currentValue: row.value,
+                          schema: null
+                        })
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                    </Button>
+                  </div>
+                </td>
+              ) : null}
             </tr>
           ))}
           {table.rows.length === 0 ? (
             <tr>
-              <td colSpan={table.columns.length + 2} className="px-3 py-10">
+              <td colSpan={table.columns.length + (canEdit ? 2 : 1)} className="px-3 py-10">
                 <EmptyState icon={<FilePenLine className="h-6 w-6" />} title="暂无实例" />
               </td>
             </tr>
@@ -1786,9 +1798,10 @@ function LeafDetailTable({
   onOpenChange
 }: {
   leafRows: ConfigLeafRow[];
-  onOpenChange: (target: ConfigChangeTarget) => void;
+  onOpenChange?: (target: ConfigChangeTarget) => void;
 }) {
   const t = useT();
+  const canEdit = Boolean(onOpenChange);
 
   return (
     <div className="min-w-0 max-w-full overflow-auto rounded border border-warm bg-paper/70">
@@ -1799,7 +1812,9 @@ function LeafDetailTable({
             <th className="px-3 py-2 font-medium">实例</th>
             <th className="px-3 py-2 font-medium">类型 / 约束</th>
             <th className="px-3 py-2 font-medium">当前值</th>
-            <th className="px-3 py-2 text-right font-medium">{t("table.actions")}</th>
+            {canEdit ? (
+              <th className="px-3 py-2 text-right font-medium">{t("table.actions")}</th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
@@ -1846,32 +1861,16 @@ function LeafDetailTable({
                     {formatTreeValue(row.value) || "-"}
                   </p>
                 </td>
-                <td className="px-3 py-2">
-                  <div className="flex justify-end gap-1.5">
-                    <Button
-                      aria-label={isSchemaOnly ? "设置叶子节点" : "修改叶子节点"}
-                      title={isSchemaOnly ? "设置叶子节点" : "修改叶子节点"}
-                      className="h-8 w-8 bg-canvas px-0"
-                      onClick={() =>
-                        onOpenChange({
-                          action: "edit-leaf",
-                          path: row.path,
-                          label: row.relativePath,
-                          currentValue: row.value,
-                          schema: row.schema ?? null
-                        })
-                      }
-                    >
-                      <FilePenLine className="h-3.5 w-3.5" aria-hidden />
-                    </Button>
-                    {!isSchemaOnly ? (
+                {canEdit ? (
+                  <td className="px-3 py-2">
+                    <div className="flex justify-end gap-1.5">
                       <Button
-                        aria-label="删除叶子节点"
-                        title="删除叶子节点"
-                        className="h-8 w-8 bg-canvas px-0 text-error"
+                        aria-label={isSchemaOnly ? "设置叶子节点" : "修改叶子节点"}
+                        title={isSchemaOnly ? "设置叶子节点" : "修改叶子节点"}
+                        className="h-8 w-8 bg-canvas px-0"
                         onClick={() =>
-                          onOpenChange({
-                            action: "delete-leaf",
+                          onOpenChange?.({
+                            action: "edit-leaf",
                             path: row.path,
                             label: row.relativePath,
                             currentValue: row.value,
@@ -1879,17 +1878,35 @@ function LeafDetailTable({
                           })
                         }
                       >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        <FilePenLine className="h-3.5 w-3.5" aria-hidden />
                       </Button>
-                    ) : null}
-                  </div>
-                </td>
+                      {!isSchemaOnly ? (
+                        <Button
+                          aria-label="删除叶子节点"
+                          title="删除叶子节点"
+                          className="h-8 w-8 bg-canvas px-0 text-error"
+                          onClick={() =>
+                            onOpenChange?.({
+                              action: "delete-leaf",
+                              path: row.path,
+                              label: row.relativePath,
+                              currentValue: row.value,
+                              schema: row.schema ?? null
+                            })
+                          }
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        </Button>
+                      ) : null}
+                    </div>
+                  </td>
+                ) : null}
               </tr>
             );
           })}
           {leafRows.length === 0 ? (
             <tr>
-              <td colSpan={6} className="px-3 py-10">
+              <td colSpan={canEdit ? 5 : 4} className="px-3 py-10">
                 <EmptyState icon={<FilePenLine className="h-6 w-6" />} title="暂无叶子节点" />
               </td>
             </tr>
