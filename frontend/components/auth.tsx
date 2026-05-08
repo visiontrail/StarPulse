@@ -19,11 +19,32 @@ import { cn } from "@/lib/utils";
 
 export function LoginView() {
   const t = useT();
+  const { locale, setLocale } = useLocale();
   const { login } = useSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [localeOpen, setLocaleOpen] = useState(false);
+  const localeContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!localeOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (localeContainerRef.current && !localeContainerRef.current.contains(e.target as Node)) {
+        setLocaleOpen(false);
+      }
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setLocaleOpen(false);
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [localeOpen]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,7 +78,7 @@ export function LoginView() {
               <div className="h-px w-full bg-gradient-to-r from-transparent via-white/35 to-transparent" />
               <div>
                 <p className="mb-2 font-mono text-[11px] uppercase tracking-[0.18em] text-accent/80">
-                  Star Pulse
+                  Galaxy Space - Star Pulse
                 </p>
                 <h1 className="text-3xl font-semibold leading-none tracking-normal text-white sm:text-[40px]">
                   {t("auth.signIn")}
@@ -115,20 +136,54 @@ export function LoginView() {
               </button>
             </form>
 
-            <div className="mt-5 grid grid-cols-5 gap-1" aria-hidden="true">
-              {Array.from({ length: 15 }).map((_, index) => (
-                <span
-                  key={index}
-                  className={cn(
-                    "h-1 bg-white/10",
-                    index % 4 === 0 && "bg-accent/50",
-                    index % 7 === 0 && "bg-[#4B4BA0]/70"
-                  )}
-                />
-              ))}
-            </div>
           </div>
         </div>
+      </div>
+      <div ref={localeContainerRef} className="absolute bottom-4 right-4 z-30 sm:bottom-6 sm:right-6">
+        <button
+          type="button"
+          onClick={() => setLocaleOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={localeOpen}
+          className={cn(
+            "inline-flex h-9 items-center gap-1.5 border border-white/20 bg-black/55 px-2.5 text-xs text-zinc-100 backdrop-blur-md transition hover:border-white/35",
+            localeOpen && "border-accent/70 text-accent"
+          )}
+        >
+          <span>{t("lang.label")}</span>
+          <ChevronDown className={cn("h-3.5 w-3.5 transition", localeOpen && "rotate-180")} aria-hidden="true" />
+        </button>
+
+        {localeOpen ? (
+          <div
+            role="menu"
+            className="absolute bottom-full right-0 mb-2 grid w-44 gap-1 border border-white/20 bg-black/78 p-1.5 backdrop-blur-xl"
+          >
+            {SUPPORTED_LOCALES.map((value) => {
+              const active = locale === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    setLocale(value);
+                    setLocaleOpen(false);
+                  }}
+                  aria-pressed={active}
+                  className={cn(
+                    "inline-flex h-8 items-center justify-between gap-1 border px-2 text-xs transition",
+                    active
+                      ? "border-accent/70 bg-accent/15 text-accent"
+                      : "border-white/10 bg-white/[0.04] text-zinc-100 hover:border-white/35"
+                  )}
+                >
+                  <span className="truncate">{t(LOCALE_LABEL_KEYS[value])}</span>
+                  {active ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </div>
   );

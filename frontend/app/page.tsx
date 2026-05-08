@@ -14,6 +14,7 @@ import {
   Gauge,
   GripVertical,
   HardDrive,
+  HelpCircle,
   KeyRound,
   ListRestart,
   Maximize2,
@@ -80,6 +81,8 @@ type ConfigChangeTarget = {
   label: string;
   currentValue?: unknown;
   schema?: YangNodeInfo | null;
+  instanceCells?: Record<string, ConfigListTableCell>;
+  instanceColumns?: ConfigListTableColumn[];
 };
 
 type ConfigLeafRow = {
@@ -1660,7 +1663,9 @@ function ConfigModelWorkspace({
                   path: `${effectivePath}.*`,
                   label: "新增实例",
                   currentValue: {},
-                  schema: matchYangNode(schemaIndex, `${effectivePath}.*`, data)
+                  schema: effectiveListSchema ?? matchYangNode(schemaIndex, `${effectivePath}.*`, data),
+                  instanceColumns: listTable?.columns,
+                  instanceCells: {}
                 })
               }
             >
@@ -1671,7 +1676,7 @@ function ConfigModelWorkspace({
         </div>
 
         {isMultiInstance && listTable ? (
-          <ListInstanceTable table={listTable} onOpenChange={onOpenChange} />
+          <ListInstanceTable table={listTable} listSchema={effectiveListSchema} onOpenChange={onOpenChange} />
         ) : (
           <LeafDetailTable leafRows={allLeafRows} onOpenChange={onOpenChange} />
         )}
@@ -1682,9 +1687,11 @@ function ConfigModelWorkspace({
 
 function ListInstanceTable({
   table,
+  listSchema,
   onOpenChange
 }: {
   table: ConfigListTable;
+  listSchema?: YangNodeInfo | null;
   onOpenChange?: (target: ConfigChangeTarget) => void;
 }) {
   const t = useT();
@@ -1753,7 +1760,9 @@ function ListInstanceTable({
                           path: row.path,
                           label: `编辑实例 ${row.label}`,
                           currentValue: row.value,
-                          schema: null
+                          schema: listSchema ?? null,
+                          instanceCells: row.cells,
+                          instanceColumns: table.columns
                         })
                       }
                     >
@@ -1769,7 +1778,7 @@ function ListInstanceTable({
                           path: row.path,
                           label: `删除实例 ${row.label}`,
                           currentValue: row.value,
-                          schema: null
+                          schema: listSchema ?? null
                         })
                       }
                     >
@@ -2085,6 +2094,7 @@ function ConfigChangeDialog({
   const [targetValue, setTargetValue] = useState(formatTreeValue(target.currentValue));
   const blocked = !canSubmitChange || Boolean(disabledReason);
   const isDeleteAction = target.action === "delete-leaf" || target.action === "delete-instance";
+  const isInstance = target.action === "edit-instance" || target.action === "add-instance";
   const missingRequired = !changeSummary.trim() || !changeReason.trim() || (!isDeleteAction && !configBody.trim());
 
   useEffect(() => {
@@ -2099,9 +2109,48 @@ function ConfigChangeDialog({
     onConfigBodyChange(buildNetconfPayload(target.action, path, effectiveValue, configData, schemaIndex));
   }
 
+  const metaAndFormPanel = (
+    <>
+      <div>
+        <FieldLabel>YANG 节点信息</FieldLabel>
+        <YangSchemaPanel schema={target.schema} currentValue={target.currentValue} />
+      </div>
+      <div>
+        <FieldLabel>{t("change.summary")}</FieldLabel>
+        <input
+          value={changeSummary}
+          onChange={(event) => onChangeSummaryChange(event.target.value)}
+          className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
+        />
+      </div>
+      <div>
+        <FieldLabel>{t("change.reason")}</FieldLabel>
+        <textarea
+          value={changeReason}
+          onChange={(event) => onChangeReasonChange(event.target.value)}
+          rows={3}
+          className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
+        />
+      </div>
+      <div className="rounded border border-warm bg-paper p-3">
+        <div className="grid gap-2 text-xs text-muted sm:grid-cols-3">
+          <Metric label="操作" value={configChangeActionLabel(target.action)} />
+          <Metric label="模型" value={yangModuleLabel(target.schema)} />
+          <Metric label="内部请求大小" value={`${configBody.length} bytes`} />
+        </div>
+      </div>
+      {preflight ? <PreflightSummary preflight={preflight} compact /> : null}
+      {!canSubmitChange ? <p className="text-xs text-warn">{t("change.requireSubmitPerm")}</p> : null}
+      {disabledReason ? <p className="text-xs text-warn">{disabledReason}</p> : null}
+    </>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/35 p-3 backdrop-blur-sm">
-      <div className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded border border-warm bg-canvas shadow-2xl">
+      <div className={cn(
+        "flex max-h-[92dvh] w-full flex-col overflow-hidden rounded border border-warm bg-canvas shadow-2xl",
+        isInstance ? "max-w-5xl" : "max-w-3xl"
+      )}>
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-warm px-4 py-3">
           <div className="min-w-0">
             <p className="font-mono text-[11px] text-muted">
@@ -2117,49 +2166,46 @@ function ConfigChangeDialog({
           </Button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 py-3">
-          <div>
-            <FieldLabel>YANG 节点信息</FieldLabel>
-            <YangSchemaPanel schema={target.schema} currentValue={target.currentValue} />
-          </div>
-          <TypedYangValueEditor
-            action={target.action}
-            schema={target.schema}
-            value={targetValue}
-            currentValue={target.currentValue}
-            onChange={(value) => {
-              setTargetValue(value);
-              updateGeneratedPayload(target.path, value);
-            }}
-          />
-          <div>
-            <FieldLabel>{t("change.summary")}</FieldLabel>
-            <input
-              value={changeSummary}
-              onChange={(event) => onChangeSummaryChange(event.target.value)}
-              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
-            />
-          </div>
-          <div>
-            <FieldLabel>{t("change.reason")}</FieldLabel>
-            <textarea
-              value={changeReason}
-              onChange={(event) => onChangeReasonChange(event.target.value)}
-              rows={3}
-              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm outline-none focus:border-warm-strong"
-            />
-          </div>
-          <div className="rounded border border-warm bg-paper p-3">
-            <div className="grid gap-2 text-xs text-muted sm:grid-cols-3">
-              <Metric label="操作" value={configChangeActionLabel(target.action)} />
-              <Metric label="模型" value={yangModuleLabel(target.schema)} />
-              <Metric label="内部请求大小" value={`${configBody.length} bytes`} />
+        {isInstance ? (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="grid h-full min-h-0 grid-cols-[1fr_320px]">
+              <div className="min-h-0 overflow-auto border-r border-warm px-4 py-3">
+                {isDeleteAction ? (
+                  <div className="rounded border border-error/20 bg-error/10 p-3 text-xs text-error">
+                    删除操作不需要填写目标值；提交前仍会执行服务端预检。
+                  </div>
+                ) : (
+                  <InstanceContentEditor
+                    instanceColumns={target.instanceColumns}
+                    instanceCells={target.instanceCells}
+                    currentValue={target.currentValue}
+                    onChange={(value) => {
+                      setTargetValue(value);
+                      updateGeneratedPayload(target.path, value);
+                    }}
+                  />
+                )}
+              </div>
+              <div className="min-h-0 space-y-3 overflow-auto px-4 py-3">
+                {metaAndFormPanel}
+              </div>
             </div>
           </div>
-          {preflight ? <PreflightSummary preflight={preflight} compact /> : null}
-          {!canSubmitChange ? <p className="text-xs text-warn">{t("change.requireSubmitPerm")}</p> : null}
-          {disabledReason ? <p className="text-xs text-warn">{disabledReason}</p> : null}
-        </div>
+        ) : (
+          <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 py-3">
+            <TypedYangValueEditor
+              action={target.action}
+              schema={target.schema}
+              value={targetValue}
+              currentValue={target.currentValue}
+              onChange={(value) => {
+                setTargetValue(value);
+                updateGeneratedPayload(target.path, value);
+              }}
+            />
+            {metaAndFormPanel}
+          </div>
+        )}
 
         <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-warm px-4 py-3">
           <Button onClick={onClose} className="bg-paper">
@@ -2204,27 +2250,11 @@ function TypedYangValueEditor({
   const yangType = normalizedYangType(schema, currentValue);
   const enumOptions = yangEnumOptions(schema);
   const range = yangRange(schema);
-  const isInstance = action === "edit-instance" || action === "add-instance";
 
   if (isDeleteAction) {
     return (
       <div className="rounded border border-error/20 bg-error/10 p-3 text-xs text-error">
         删除操作不需要填写目标值；提交前仍会执行服务端预检。
-      </div>
-    );
-  }
-
-  if (isInstance) {
-    return (
-      <div>
-        <FieldLabel>实例内容</FieldLabel>
-        <textarea
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          rows={6}
-          spellCheck={false}
-          className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 font-mono text-xs outline-none focus:border-warm-strong"
-        />
       </div>
     );
   }
@@ -2390,6 +2420,228 @@ function YangSchemaPanel({ schema, currentValue }: { schema?: YangNodeInfo | nul
       {!schema && (
         <p className="mt-1 text-[10px] text-muted">未匹配到 get-schema 节点定义</p>
       )}
+    </div>
+  );
+}
+
+// ── YANG Node Info Modal ──────────────────────────────────────────────────────
+
+function YangNodeInfoModal({
+  schema,
+  label,
+  onClose
+}: {
+  schema: YangNodeInfo;
+  label: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm overflow-hidden rounded border border-warm bg-canvas shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-warm px-3 py-2.5">
+          <span className="truncate font-mono text-xs font-semibold text-ink" title={label}>{label}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded p-0.5 text-muted transition hover:text-ink"
+          >
+            <XCircle className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+        <div className="p-3">
+          <YangSchemaPanel schema={schema} />
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ── Instance Field Editor ─────────────────────────────────────────────────────
+
+function InstanceFieldInput({
+  col,
+  schema,
+  value,
+  onChange,
+  onShowInfo
+}: {
+  col: ConfigListTableColumn;
+  schema: YangNodeInfo | null;
+  value: string;
+  onChange: (value: string) => void;
+  onShowInfo?: () => void;
+}) {
+  const yangType = normalizedYangType(schema, value);
+  const enumOptions = yangEnumOptions(schema);
+  const range = yangRange(schema);
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1">
+        <span className="text-[11px] font-medium text-ink">{col.label}</span>
+        {col.isKey ? (
+          <span className="rounded border border-warm bg-canvas px-1 font-mono text-[9px] uppercase text-muted">
+            key
+          </span>
+        ) : null}
+        {onShowInfo ? (
+          <button
+            type="button"
+            onClick={onShowInfo}
+            title="查看 YANG 节点信息"
+            className="ml-auto shrink-0 rounded p-0.5 text-muted transition hover:text-accent"
+          >
+            <HelpCircle className="h-3 w-3" aria-hidden />
+          </button>
+        ) : null}
+      </div>
+      {enumOptions.length > 0 ? (
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 w-full rounded border border-warm bg-paper px-2 text-xs outline-none focus:border-warm-strong"
+        >
+          {enumOptions.map((opt) => (
+            <option key={opt.name} value={opt.name}>
+              {opt.name}{opt.value !== undefined && opt.value !== null ? ` (${opt.value})` : ""}
+            </option>
+          ))}
+        </select>
+      ) : yangType === "boolean" || yangType === "bool" ? (
+        <div className="grid grid-cols-2 gap-1 rounded border border-warm bg-paper p-1">
+          {["true", "false"].map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => onChange(opt)}
+              className={cn(
+                "h-7 rounded px-2 text-xs font-medium transition",
+                value === opt ? "bg-canvas text-ink shadow-panel" : "text-muted hover:text-ink"
+              )}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      ) : isNumericYangType(yangType) ? (
+        <input
+          type="number"
+          value={value}
+          min={range?.min}
+          max={range?.max}
+          step={yangType === "decimal64" ? "any" : "1"}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 w-full rounded border border-warm bg-paper px-2 font-mono text-xs outline-none focus:border-warm-strong"
+        />
+      ) : (
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 w-full rounded border border-warm bg-paper px-2 font-mono text-xs outline-none focus:border-warm-strong"
+        />
+      )}
+    </div>
+  );
+}
+
+function InstanceContentEditor({
+  instanceColumns,
+  instanceCells,
+  currentValue,
+  onChange
+}: {
+  instanceColumns?: ConfigListTableColumn[];
+  instanceCells?: Record<string, ConfigListTableCell>;
+  currentValue: unknown;
+  onChange: (value: string) => void;
+}) {
+  const baseObj = useMemo<Record<string, unknown>>(() => {
+    if (currentValue && typeof currentValue === "object" && !Array.isArray(currentValue))
+      return currentValue as Record<string, unknown>;
+    return {};
+  }, [currentValue]);
+
+  const columns = useMemo(() => {
+    if (instanceColumns && instanceColumns.length > 0) return instanceColumns;
+    if (instanceCells) return Object.keys(instanceCells).map((k) => ({ key: k, label: k, isKey: false }));
+    return [];
+  }, [instanceColumns, instanceCells]);
+
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>(() => {
+    const result: Record<string, string> = {};
+    for (const col of columns) {
+      const cell = instanceCells?.[col.key];
+      const raw = baseObj[col.key] ?? cell?.value;
+      result[col.key] = formatInputValueForSchema(raw, cell?.schema ?? null);
+    }
+    return result;
+  });
+
+  const [yangInfoTarget, setYangInfoTarget] = useState<{ schema: YangNodeInfo; label: string } | null>(null);
+
+  function handleFieldChange(key: string, fieldValue: string) {
+    const updated = { ...fieldValues, [key]: fieldValue };
+    setFieldValues(updated);
+    const fullObj = { ...baseObj, ...updated };
+    onChange(JSON.stringify(fullObj));
+  }
+
+  const useTwoCol = columns.length > 3;
+
+  if (columns.length === 0) {
+    return (
+      <div>
+        <FieldLabel>实例内容</FieldLabel>
+        <p className="mt-1 text-xs text-muted">暂无字段信息，请直接编辑生成的 NETCONF XML。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {yangInfoTarget ? (
+        <YangNodeInfoModal
+          schema={yangInfoTarget.schema}
+          label={yangInfoTarget.label}
+          onClose={() => setYangInfoTarget(null)}
+        />
+      ) : null}
+      <FieldLabel>实例字段</FieldLabel>
+      <div className={cn("mt-2 grid gap-x-4 gap-y-3", useTwoCol ? "grid-cols-2" : "grid-cols-1")}>
+        {columns.map((col) => {
+          const cell = instanceCells?.[col.key];
+          const schema = cell?.schema ?? null;
+          return (
+            <InstanceFieldInput
+              key={col.key}
+              col={col}
+              schema={schema}
+              value={fieldValues[col.key] ?? ""}
+              onChange={(v) => handleFieldChange(col.key, v)}
+              onShowInfo={
+                schema
+                  ? () => setYangInfoTarget({ schema, label: col.label })
+                  : undefined
+              }
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
