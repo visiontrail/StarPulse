@@ -96,6 +96,7 @@ type ConfigLeafRow = {
 type ConfigListTableColumn = {
   key: string;
   label: string;
+  isKey?: boolean;
 };
 
 type ConfigListTableCell = {
@@ -1546,14 +1547,15 @@ function ConfigModelWorkspace({
   const selectedValue = getTreeValueAtPath(data, selectedPath);
   const effectivePath = isObjectLike(selectedValue) ? selectedPath : "root";
   const effectiveValue = isObjectLike(selectedValue) ? selectedValue : data;
+  const effectiveListSchema = matchYangListNode(schemaIndex, effectivePath, data);
   const leafRows = useMemo(
     () => collectLeafRows(effectiveValue, effectivePath, data, schemaIndex),
     [data, effectivePath, effectiveValue, schemaIndex]
   );
-  const isMultiInstance = Array.isArray(effectiveValue);
+  const isMultiInstance = Array.isArray(effectiveValue) || isYangListNode(effectiveListSchema);
   const listTable = useMemo(
-    () => (Array.isArray(effectiveValue) ? collectListTable(effectiveValue, effectivePath, data, schemaIndex) : null),
-    [data, effectivePath, effectiveValue, schemaIndex]
+    () => (isMultiInstance ? collectListTable(effectiveValue, effectivePath, data, schemaIndex) : null),
+    [data, effectivePath, effectiveValue, isMultiInstance, schemaIndex]
   );
   const hasYangModel = schemaIndex.byPath.size + schemaIndex.byNamespacePath.size > 0;
   const allLeafRows = useMemo(
@@ -1573,7 +1575,7 @@ function ConfigModelWorkspace({
   }, [effectivePath, schemaIndex]);
 
   return (
-    <div ref={containerRef} className="flex min-h-[520px]">
+    <div ref={containerRef} className="flex min-h-[520px] min-w-0">
       <div style={{ width: treeWidth, minWidth: 200, flexShrink: 0 }}>
         <InfoPanel
           icon={<Settings2 />}
@@ -1602,6 +1604,7 @@ function ConfigModelWorkspace({
         >
           <ParentObjectTree
             data={data}
+            schemaIndex={schemaIndex}
             selectedPath={effectivePath}
             openPaths={treeOpenPaths}
             onToggle={treeToggle}
@@ -1619,7 +1622,7 @@ function ConfigModelWorkspace({
         <div className="w-px self-stretch bg-warm transition-colors group-hover:w-0.5 group-hover:bg-accent/60" />
       </div>
 
-      <section className="flex min-h-0 flex-1 flex-col rounded border border-warm bg-surface/70 p-4">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col rounded border border-warm bg-surface/70 p-4">
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="text-accent"><FilePenLine className="h-4 w-4" aria-hidden /></span>
           <h3 className="shrink-0 text-sm font-semibold">叶子节点</h3>
@@ -1678,15 +1681,22 @@ function ListInstanceTable({
   const t = useT();
 
   return (
-    <div className="overflow-auto rounded border border-warm bg-paper/70">
+    <div className="min-w-0 max-w-full overflow-auto rounded border border-warm bg-paper/70">
       <table className="min-w-full text-left text-xs">
         <thead className="sticky top-0 bg-paper text-muted">
           <tr className="border-b border-warm">
-            <th className="w-16 min-w-16 px-3 py-2 font-medium">实例</th>
+            <th className="w-52 min-w-52 px-3 py-2 font-medium">实例</th>
             {table.columns.map((column) => (
               <th key={column.key} className="min-w-44 px-3 py-2 font-medium">
-                <span className="block truncate" title={column.label}>
-                  {column.label}
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="block truncate" title={column.label}>
+                    {column.label}
+                  </span>
+                  {column.isKey ? (
+                    <span className="shrink-0 rounded border border-warm bg-canvas px-1 font-mono text-[9px] uppercase text-muted">
+                      key
+                    </span>
+                  ) : null}
                 </span>
               </th>
             ))}
@@ -1696,8 +1706,8 @@ function ListInstanceTable({
         <tbody>
           {table.rows.map((row) => (
             <tr key={row.path} className="border-b border-warm/70 last:border-0 hover:bg-canvas/70">
-              <td className="sticky left-0 z-10 w-16 min-w-16 border-r border-warm/70 bg-paper/95 px-3 py-2">
-                <p className="font-mono text-[11px] font-medium text-ink">{row.label}</p>
+              <td className="sticky left-0 z-10 w-52 min-w-52 max-w-72 border-r border-warm/70 bg-paper/95 px-3 py-2">
+                <p className="truncate font-mono text-[11px] font-medium text-ink" title={row.label}>{row.label}</p>
               </td>
               {table.columns.map((column) => {
                 const cell = row.cells[column.key];
@@ -1779,7 +1789,7 @@ function LeafDetailTable({
   const t = useT();
 
   return (
-    <div className="overflow-auto rounded border border-warm bg-paper/70">
+    <div className="min-w-0 max-w-full overflow-auto rounded border border-warm bg-paper/70">
       <table className="min-w-full text-left text-xs">
         <thead className="sticky top-0 bg-paper text-muted">
           <tr className="border-b border-warm">
@@ -1808,8 +1818,10 @@ function LeafDetailTable({
                     {row.path}
                   </p>
                 </td>
-                <td className="px-3 py-2 font-mono text-[11px] text-muted">
-                  {row.instanceLabel ?? "-"}
+                <td className="max-w-64 px-3 py-2 font-mono text-[11px] text-muted">
+                  <p className="truncate" title={row.instanceLabel ?? undefined}>
+                    {row.instanceLabel ?? "-"}
+                  </p>
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex max-w-[260px] flex-wrap gap-1.5">
@@ -1888,12 +1900,14 @@ function LeafDetailTable({
 
 function ParentObjectTree({
   data,
+  schemaIndex,
   selectedPath,
   openPaths,
   onToggle,
   onSelectPath
 }: {
   data: unknown;
+  schemaIndex: YangSchemaIndex;
   selectedPath: string;
   openPaths: Set<string>;
   onToggle: (path: string) => void;
@@ -1906,6 +1920,8 @@ function ParentObjectTree({
         value={data}
         path="root"
         depth={0}
+        root={data}
+        schemaIndex={schemaIndex}
         openPaths={openPaths}
         selectedPath={selectedPath}
         onToggle={onToggle}
@@ -1920,6 +1936,8 @@ function ParentTreeRows({
   value,
   path,
   depth,
+  root,
+  schemaIndex,
   openPaths,
   selectedPath,
   onToggle,
@@ -1929,6 +1947,8 @@ function ParentTreeRows({
   value: unknown;
   path: string;
   depth: number;
+  root: unknown;
+  schemaIndex: YangSchemaIndex;
   openPaths: Set<string>;
   selectedPath: string;
   onToggle: (path: string) => void;
@@ -1940,6 +1960,8 @@ function ParentTreeRows({
   const entries = objectEntries(value);
   const childParents = entries.filter(([, childValue]) => isObjectLike(childValue));
   const leafCount = countLeaves(value);
+  const schema = matchYangNode(schemaIndex, path, root);
+  const typeLabel = displayTreeNodeType(value, schema);
 
   return (
     <div>
@@ -1965,7 +1987,7 @@ function ParentTreeRows({
           )}
           <span className="truncate font-medium">{label}</span>
           <span className="shrink-0 rounded border border-warm bg-paper px-1.5 font-mono text-[10px] uppercase text-muted">
-            {treeType(value)}
+            {typeLabel}
           </span>
         </button>
         <span className="shrink-0 font-mono text-[10px] text-muted">
@@ -1974,19 +1996,27 @@ function ParentTreeRows({
       </div>
       {open && childParents.length > 0 ? (
         <div>
-          {childParents.map(([childLabel, childValue]) => (
-            <ParentTreeRows
-              key={`${path}.${childLabel}`}
-              label={childLabel}
-              value={childValue}
-              path={`${path}.${childLabel}`}
-              depth={depth + 1}
-              openPaths={openPaths}
-              selectedPath={selectedPath}
-              onToggle={onToggle}
-              onSelectPath={onSelectPath}
-            />
-          ))}
+          {childParents.map(([childLabel, childValue]) => {
+            const childPath = `${path}.${childLabel}`;
+            const displayLabel = Array.isArray(value)
+              ? listInstanceLabel(childValue, path, childLabel, root, schemaIndex)
+              : childLabel;
+            return (
+              <ParentTreeRows
+                key={childPath}
+                label={displayLabel}
+                value={childValue}
+                path={childPath}
+                depth={depth + 1}
+                root={root}
+                schemaIndex={schemaIndex}
+                openPaths={openPaths}
+                selectedPath={selectedPath}
+                onToggle={onToggle}
+                onSelectPath={onSelectPath}
+              />
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -2689,6 +2719,7 @@ function collectYangBlocks(
     const body = startsBlock && closeIndex > openIndex ? text.slice(openIndex + 1, closeIndex) : "";
     const path = context.parentPath ? `${context.parentPath}/${name}` : `/${name}`;
     const config = parseYangBoolean(body, "config") ?? context.inheritedConfig;
+    const isLeaf = kind === "leaf" || kind === "leaf-list";
     const node: YangNodeInfo = {
       name,
       path,
@@ -2697,18 +2728,18 @@ function collectYangBlocks(
       prefix: context.prefix,
       kind,
       node_type: kind,
-      type: parseYangType(body),
-      enum_values: parseYangEnums(body),
-      range: parseYangTypeArgument(body, "range"),
-      length: parseYangTypeArgument(body, "length"),
-      pattern: parseYangTypeArgument(body, "pattern"),
-      units: matchYangString(body, /\bunits\s+["']?([^"';]+)["']?\s*;/),
-      default: matchYangString(body, /\bdefault\s+["']?([^"';]+)["']?\s*;/),
-      mandatory: parseYangBoolean(body, "mandatory"),
+      type: isLeaf ? parseYangType(body) : undefined,
+      enum_values: isLeaf ? parseYangEnums(body) : undefined,
+      range: isLeaf ? parseYangTypeArgument(body, "range") : undefined,
+      length: isLeaf ? parseYangTypeArgument(body, "length") : undefined,
+      pattern: isLeaf ? parseYangTypeArgument(body, "pattern") : undefined,
+      units: isLeaf ? matchYangString(body, /\bunits\s+["']?([^"';]+)["']?\s*;/) : undefined,
+      default: isLeaf ? matchYangString(body, /\bdefault\s+["']?([^"';]+)["']?\s*;/) : undefined,
+      mandatory: isLeaf ? parseYangBoolean(body, "mandatory") : undefined,
       config,
       status: matchYangString(body, /\bstatus\s+([-\w]+)\s*;/),
       description: matchYangString(body, /\bdescription\s+"([^"]*)"\s*;/),
-      key: matchYangString(body, /\bkey\s+"([^"]+)"\s*;/),
+      key: kind === "list" ? parseYangKeyStatement(body) : undefined,
     };
     context.nodes.push(node);
     if (body) {
@@ -2725,6 +2756,13 @@ function collectYangBlocks(
 function parseYangType(body: string): string | undefined {
   const typeMatch = /\btype\s+([-\w:.]+)\s*(\{|;)/.exec(body);
   return typeMatch ? normalizeYangName(typeMatch[1]) : undefined;
+}
+
+function parseYangKeyStatement(body: string): string[] | undefined {
+  const raw = matchYangString(body, /\bkey\s+"([^"]+)"\s*;/);
+  if (!raw) return undefined;
+  const keys = Array.from(new Set(raw.split(/\s+/).map(normalizeYangName).filter(Boolean)));
+  return keys.length > 0 ? keys : undefined;
 }
 
 function parseYangEnums(body: string): YangEnumOption[] | undefined {
@@ -2845,12 +2883,22 @@ function normalizeYangNode(record: Record<string, unknown>): YangNodeInfo {
     range: asString(record.range),
     length: asString(record.length),
     pattern: asString(record.pattern),
-    key: typeof record.key === "string" || Array.isArray(record.key) ? record.key as string | string[] : null,
+    key: normalizeYangKeyStatement(record.key),
     leafref_path: asString(record.leafref_path) ?? asString(record.path_arg),
     enum_values: stringList(record.enum_values ?? record.enums),
     values: stringList(record.values),
     options: stringList(record.options),
   };
+}
+
+function normalizeYangKeyStatement(value: unknown): string[] | null {
+  const rawParts = Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : typeof value === "string"
+      ? value.split(/\s+/)
+      : [];
+  const keys = Array.from(new Set(rawParts.map(normalizeYangName).filter(Boolean)));
+  return keys.length > 0 ? keys : null;
 }
 
 function matchYangNode(
@@ -2888,6 +2936,89 @@ function matchYangNode(
   const contextMatch = chooseYangNodeByContext(normalizedPath, candidates);
   if (contextMatch) return contextMatch;
   return candidates.length === 1 ? candidates[0] : null;
+}
+
+function matchYangListNode(
+  index: YangSchemaIndex,
+  path: string,
+  root: unknown
+): YangNodeInfo | null {
+  const direct = matchYangNode(index, path, root);
+  if (isYangListNode(direct)) return direct;
+
+  const normalizedPath = normalizeUiPath(path);
+  const namespace = namespaceForPath(root, path);
+  const localName = normalizeYangName(lastPathSegment(path));
+  const candidates = (index.byName.get(localName) ?? []).filter(isYangListNode);
+  const namespaceMatches = namespace ? candidates.filter((node) => !node.namespace || node.namespace === namespace) : candidates;
+  const scored = namespaceMatches
+    .map((node) => {
+      const schemaPath = normalizeYangPath(node.path ?? node.absolute_path ?? node.qname);
+      const score = schemaPath && (normalizedPath.endsWith(schemaPath) || schemaPath.endsWith(normalizedPath))
+        ? schemaPath.length
+        : 0;
+      return { node, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (scored.length > 0 && (scored.length === 1 || scored[0].score > scored[1].score)) {
+    return scored[0].node;
+  }
+  return namespaceMatches.length === 1 ? namespaceMatches[0] : null;
+}
+
+function isYangListNode(node: YangNodeInfo | null | undefined): node is YangNodeInfo {
+  return (node?.kind ?? node?.node_type ?? "").toLowerCase() === "list";
+}
+
+function yangListKeyNames(schema: YangNodeInfo | null | undefined): string[] {
+  return normalizeYangKeyStatement(schema?.key) ?? [];
+}
+
+function listInstanceLabel(
+  item: unknown,
+  listPath: string,
+  index: string,
+  root: unknown,
+  schemaIndex: YangSchemaIndex
+): string {
+  const schema = matchYangListNode(schemaIndex, listPath, root);
+  const keyNames = yangListKeyNames(schema);
+  const keyParts = keyNames
+    .map((keyName) => {
+      const value = listKeyLeafValue(item, keyName);
+      const formatted = formatTreeValue(value);
+      return formatted ? `${keyName}=${formatted}` : null;
+    })
+    .filter(Boolean);
+
+  if (keyParts.length > 0) return keyParts.join(" / ");
+  if (/^\d+$/.test(index)) return `#${Number(index) + 1}`;
+  return index;
+}
+
+function listInstanceLabelForPath(
+  root: unknown,
+  path: string,
+  schemaIndex: YangSchemaIndex
+): string | undefined {
+  const segments = path.split(".");
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    if (!/^\d+$/.test(segments[index])) continue;
+    const listPath = segments.slice(0, index).join(".");
+    const itemPath = segments.slice(0, index + 1).join(".");
+    const item = getTreeValueAtPath(root, itemPath);
+    return listInstanceLabel(item, listPath, segments[index], root, schemaIndex);
+  }
+  return undefined;
+}
+
+function listKeyLeafValue(item: unknown, keyName: string): unknown {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return undefined;
+  const record = item as Record<string, unknown>;
+  if (keyName in record) return record[keyName];
+  const entry = Object.entries(record).find(([name]) => normalizeYangName(name) === keyName);
+  return entry?.[1];
 }
 
 function uniqueYangNode(candidates: YangNodeInfo[]): YangNodeInfo | null {
@@ -2988,6 +3119,8 @@ function asBoolean(value: unknown): boolean | undefined {
 }
 
 function normalizedYangType(schema: YangNodeInfo | null | undefined, currentValue?: unknown): string {
+  const kind = (schema?.kind ?? schema?.node_type ?? "").toLowerCase();
+  if (kind === "list" || kind === "container") return kind;
   const raw = schema?.base_type ?? schema?.type ?? schema?.type_name;
   if (raw) return raw.replace(/^.*:/, "").toLowerCase();
   if (typeof currentValue === "boolean") return "boolean";
@@ -2996,6 +3129,8 @@ function normalizedYangType(schema: YangNodeInfo | null | undefined, currentValu
 }
 
 function displayYangType(schema: YangNodeInfo | null | undefined, currentValue?: unknown): string {
+  const kind = (schema?.kind ?? schema?.node_type ?? "").toLowerCase();
+  if (kind === "list" || kind === "container") return kind;
   const type = schema?.type ?? schema?.type_name ?? schema?.base_type;
   if (type) return type;
   return treeType(currentValue);
@@ -3098,6 +3233,13 @@ function treeType(value: unknown) {
   return typeof value;
 }
 
+function displayTreeNodeType(value: unknown, schema?: YangNodeInfo | null) {
+  const kind = (schema?.kind ?? schema?.node_type ?? "").toLowerCase();
+  if (kind === "list" || kind === "leaf-list") return kind;
+  if (kind === "container") return "node";
+  return treeType(value);
+}
+
 function formatTreeValue(value: unknown) {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
@@ -3131,8 +3273,7 @@ function collectLeafRows(
     if (!isObjectLike(node)) {
       const relativePath = path === basePath ? "." : path.slice(basePath.length + 1);
       const segments = relativePath.split(".");
-      const instanceIndex = segments.findIndex((segment) => /^\d+$/.test(segment));
-      const instanceLabel = instanceIndex >= 0 ? `#${Number(segments[instanceIndex]) + 1}` : undefined;
+      const instanceLabel = listInstanceLabelForPath(root, path, schemaIndex);
       const schema = matchYangNode(schemaIndex, path, root);
       const namespace = namespaceForPath(root, path);
       rows.push({
@@ -3207,20 +3348,28 @@ function isInternalTreeMetadataKey(key: string): boolean {
 }
 
 function collectListTable(
-  value: unknown[],
+  value: unknown,
   basePath: string,
   root: unknown,
   schemaIndex: YangSchemaIndex
 ): ConfigListTable {
   const columns: ConfigListTableColumn[] = [];
   const seenColumns = new Set<string>();
-  const rows = value.map((item, index): ConfigListTableRow => {
-    const itemPath = `${basePath}.${index}`;
+  const keyNames = yangListKeyNames(matchYangListNode(schemaIndex, basePath, root));
+  for (const keyName of keyNames) {
+    seenColumns.add(keyName);
+    columns.push({ key: keyName, label: keyName, isKey: true });
+  }
+
+  const rows = listInstancesForValue(value, basePath).map((instance): ConfigListTableRow => {
+    const item = instance.value;
+    const itemPath = instance.path;
     const cells: Record<string, ConfigListTableCell> = {};
     const leafRows = collectLeafRows(item, itemPath, root, schemaIndex);
 
     for (const leaf of leafRows) {
-      const key = leaf.relativePath === "." ? "." : leaf.relativePath;
+      const rawKey = leaf.relativePath === "." ? "." : leaf.relativePath;
+      const key = keyNames.find((keyName) => normalizeYangName(rawKey) === keyName) ?? rawKey;
       const label = key === "." ? "当前值" : key;
       if (!seenColumns.has(key)) {
         seenColumns.add(key);
@@ -3237,13 +3386,21 @@ function collectListTable(
 
     return {
       path: itemPath,
-      label: String(index + 1),
+      label: listInstanceLabel(item, basePath, instance.index, root, schemaIndex),
       value: item,
       cells
     };
   });
 
   return { columns, rows };
+}
+
+function listInstancesForValue(value: unknown, basePath: string): Array<{ value: unknown; path: string; index: string }> {
+  if (Array.isArray(value)) {
+    return value.map((item, index) => ({ value: item, path: `${basePath}.${index}`, index: String(index) }));
+  }
+  if (isObjectLike(value)) return [{ value, path: basePath, index: "0" }];
+  return [];
 }
 
 function countLeaves(value: unknown): number {

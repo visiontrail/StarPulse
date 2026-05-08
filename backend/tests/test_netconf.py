@@ -201,6 +201,67 @@ def test_parse_yang_nodes_extracts_leaf_types_and_constraints() -> None:
     assert metric["range"] == "1..65535"
 
 
+def test_parse_yang_nodes_extracts_multi_key_list() -> None:
+    parsed = parse_yang_nodes(
+        """
+        module mock-route {
+          namespace "urn:mock:route";
+          prefix mr;
+          container routes {
+            list route {
+              key "destination-prefix next-hop";
+              leaf destination-prefix { type string; }
+              leaf next-hop { type string; }
+              leaf metric { type uint16; }
+            }
+          }
+        }
+        """
+    )
+
+    assert parsed is not None
+    nodes = parsed["nodes"]
+    assert isinstance(nodes, list)
+    route = next(node for node in nodes if node["name"] == "route")
+    assert route["kind"] == "list"
+    assert route["key"] == ["destination-prefix", "next-hop"]
+    assert "type" not in route
+
+
+def test_parse_yang_nodes_keeps_list_with_type_named_key_as_list() -> None:
+    parsed = parse_yang_nodes(
+        """
+        module mock-routing {
+          namespace "urn:mock:routing";
+          prefix rt;
+          identity control-plane-protocol;
+          container control-plane-protocols {
+            list control-plane-protocol {
+              key "type name";
+              leaf type {
+                type identityref {
+                  base control-plane-protocol;
+                }
+              }
+              leaf name {
+                type string;
+              }
+            }
+          }
+        }
+        """
+    )
+
+    assert parsed is not None
+    nodes = parsed["nodes"]
+    assert isinstance(nodes, list)
+    protocol = next(node for node in nodes if node["name"] == "control-plane-protocol")
+    assert protocol["kind"] == "list"
+    assert protocol["node_type"] == "list"
+    assert protocol["key"] == ["type", "name"]
+    assert "type" not in protocol
+
+
 def test_netconf_service_rejects_unsupported_datastore_without_client_call() -> None:
     class TrackingClient(FakeNetconfClient):
         called = False

@@ -389,18 +389,28 @@ def _collect_yang_blocks(
             "prefix": prefix,
             "kind": kind,
             "node_type": kind,
-            "type": _parse_type(body),
-            "enum_values": _parse_enums(body),
-            "range": _parse_type_arg(body, "range"),
-            "length": _parse_type_arg(body, "length"),
-            "pattern": _parse_type_arg(body, "pattern"),
-            "units": _match(body, r"\bunits\s+\"?([^\"';]+)\"?\s*;"),
-            "default": _match(body, r"\bdefault\s+\"?([^\"';]+)\"?\s*;"),
-            "mandatory": _parse_bool_statement(body, "mandatory"),
+            "type": _parse_type(body) if kind in {"leaf", "leaf-list"} else None,
+            "enum_values": _parse_enums(body) if kind in {"leaf", "leaf-list"} else [],
+            "range": _parse_type_arg(body, "range") if kind in {"leaf", "leaf-list"} else None,
+            "length": _parse_type_arg(body, "length") if kind in {"leaf", "leaf-list"} else None,
+            "pattern": _parse_type_arg(body, "pattern") if kind in {"leaf", "leaf-list"} else None,
+            "units": (
+                _match(body, r"\bunits\s+\"?([^\"';]+)\"?\s*;")
+                if kind in {"leaf", "leaf-list"}
+                else None
+            ),
+            "default": (
+                _match(body, r"\bdefault\s+\"?([^\"';]+)\"?\s*;")
+                if kind in {"leaf", "leaf-list"}
+                else None
+            ),
+            "mandatory": (
+                _parse_bool_statement(body, "mandatory") if kind in {"leaf", "leaf-list"} else None
+            ),
             "config": config,
             "status": _match(body, r"\bstatus\s+([-\w]+)\s*;"),
             "description": _match(body, r"\bdescription\s+\"([^\"]*)\"\s*;"),
-            "key": _match(body, r"\bkey\s+\"([^\"]+)\"\s*;"),
+            "key": _parse_key_statement(body) if kind == "list" else [],
         }
         nodes.append({key: value for key, value in node.items() if value not in (None, [], "")})
         if body:
@@ -419,6 +429,13 @@ def _collect_yang_blocks(
 def _parse_type(body: str) -> str | None:
     match = re.search(r"\btype\s+([-\w:.]+)\s*(\{|;)", body)
     return _local_yang_name(match.group(1)) if match else None
+
+
+def _parse_key_statement(body: str) -> list[str]:
+    raw = _match(body, r"\bkey\s+\"([^\"]+)\"\s*;")
+    if not raw:
+        return []
+    return list(dict.fromkeys(_local_yang_name(part) for part in raw.split() if part.strip()))
 
 
 def _parse_enums(body: str) -> list[dict[str, object]]:
