@@ -8,7 +8,6 @@ from app.auth.audit import write_audit_event
 from app.auth.constants import AuditAction, AuditOutcome
 from app.auth.repositories import ChangeRequestRepository
 from app.common.time import utc_now
-from app.core.config import get_settings
 from app.devices.config_snapshots import RollbackPayloadDeriveError, RollbackPayloadDeriver
 from app.devices.constants import SUPPORTED_CONFIG_DATASTORES
 from app.devices.preflight import ChangePreflightService
@@ -599,27 +598,6 @@ class ChangeRequestService:
         if baseline is None or baseline.id != cr.baseline_snapshot_id:
             raise ChangeRequestError("Change request preflight baseline must be refreshed")
 
-        age_seconds = (utc_now() - _aware_datetime(baseline.collected_at)).total_seconds()
-        freshness_seconds = get_settings().baseline_snapshot_freshness_minutes * 60
-        if age_seconds > freshness_seconds:
-            write_audit_event(
-                session=self.session,
-                action=AuditAction.CHANGE_PREFLIGHT_STALE_BASELINE,
-                outcome=AuditOutcome.FAILURE,
-                actor_user_id=actor.id,
-                target_type="change_request",
-                target_id=str(cr.id),
-                metadata={
-                    "device_id": cr.device_id,
-                    "datastore": cr.datastore,
-                    "baseline_snapshot_id": cr.baseline_snapshot_id,
-                    "preflight_status": cr.preflight_status,
-                },
-                ip_address=ip_address,
-            )
-            self.session.commit()
-            raise ChangeRequestError("Change request preflight baseline is stale")
-
     def _ensure_rollback_preflight_valid(
         self,
         cr: DeviceConfigChangeRequest,
@@ -767,11 +745,3 @@ def _preflight_fields(preflight) -> dict[str, object]:
         ),
         "preflight_generated_at": preflight.generated_at,
     }
-
-
-def _aware_datetime(value):
-    from datetime import UTC
-
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value

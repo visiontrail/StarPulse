@@ -257,30 +257,6 @@ def test_preflight_reports_missing_baseline_and_submit_rejects(
     assert db_session.query(DeviceConfigChangeRequest).count() == 0
 
 
-def test_preflight_reports_stale_baseline(client: TestClient, db_session: Session, operator_user):
-    device = _create_ready_device(
-        db_session,
-        collected_at=datetime.now(UTC) - timedelta(hours=2),
-    )
-    token = get_token(client, "operator1")
-
-    resp = client.post(
-        "/api/v1/change-requests/preflight",
-        json={
-            "device_id": device.id,
-            "datastore": "running",
-            "change_summary": "change",
-            "config_body": "<config/>",
-            "reason": "planned maintenance",
-        },
-        headers=auth_headers(token),
-    )
-
-    assert resp.status_code == 200
-    assert resp.json()["passed"] is False
-    assert "baseline_snapshot_stale" in resp.json()["blockers"]
-    assert resp.json()["recommended_action"] == "refresh_baseline_snapshot"
-
 
 def test_preflight_rejects_invalid_datastore_empty_payload_and_viewer_permission(
     client: TestClient, db_session: Session, operator_user, viewer_user

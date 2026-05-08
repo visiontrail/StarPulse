@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 from sqlalchemy.orm import Session
@@ -14,7 +13,6 @@ from app.api.schemas.auth import (
 from app.auth.audit import write_audit_event
 from app.auth.constants import AuditAction, AuditOutcome
 from app.common.time import utc_now
-from app.core.config import get_settings
 from app.devices.config_snapshots import (
     RollbackPayloadDeriveError,
     RollbackPayloadDeriver,
@@ -101,9 +99,6 @@ class ChangePreflightService:
                 )
                 if baseline_snapshot is None:
                     blockers.append("baseline_snapshot_required")
-                elif _is_stale(baseline_snapshot.collected_at, generated_at):
-                    blockers.append("baseline_snapshot_stale")
-                    recommended_action = "refresh_baseline_snapshot"
 
         if datastore not in SUPPORTED_CONFIG_DATASTORES:
             blockers.append("unsupported_datastore")
@@ -289,13 +284,9 @@ class ChangePreflightService:
         ip_address: str | None,
     ) -> None:
         action = (
-            AuditAction.CHANGE_PREFLIGHT_STALE_BASELINE
-            if "baseline_snapshot_stale" in response.blockers
-            else (
-                AuditAction.CHANGE_PREFLIGHT_SUCCESS
-                if response.passed
-                else AuditAction.CHANGE_PREFLIGHT_FAILURE
-            )
+            AuditAction.CHANGE_PREFLIGHT_SUCCESS
+            if response.passed
+            else AuditAction.CHANGE_PREFLIGHT_FAILURE
         )
         write_audit_event(
             session=self.session,
@@ -401,14 +392,6 @@ def _latest_task(tasks, task_type: DeviceTaskType):
         if task.task_type == task_type:
             return task
     return None
-
-
-def _is_stale(collected_at: datetime, now: datetime) -> bool:
-    if collected_at.tzinfo is None:
-        collected_at = collected_at.replace(tzinfo=UTC)
-    return now - collected_at > timedelta(
-        minutes=get_settings().baseline_snapshot_freshness_minutes
-    )
 
 
 def _is_restorable_snapshot(repository: DeviceRepository, snapshot) -> bool:
