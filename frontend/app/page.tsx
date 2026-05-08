@@ -4001,6 +4001,7 @@ function AdminTab() {
   const [users, setUsers] = useState<UserRead[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -4038,13 +4039,28 @@ function AdminTab() {
           </Button>
         </div>
         {error ? <ErrorPanel message={error} onRetry={() => void loadAdminData()} /> : null}
-        <CreateUserForm onSuccess={() => void loadAdminData()} />
+        <div className="flex items-center justify-end">
+          <Button onClick={() => setShowCreateUserModal(true)} className="h-9 px-3 text-sm">
+            <Plus className="h-4 w-4" aria-hidden />
+            {t("admin.createUser")}
+          </Button>
+        </div>
         <UserListTable
           users={users}
           roles={roles}
           onToggle={(u) => void toggleUser(u)}
           onChange={() => void loadAdminData()}
         />
+        {showCreateUserModal ? (
+          <CreateUserModal
+            roles={roles}
+            onClose={() => setShowCreateUserModal(false)}
+            onSuccess={() => {
+              setShowCreateUserModal(false);
+              void loadAdminData();
+            }}
+          />
+        ) : null}
       </div>
       <aside className="space-y-4">
         <RolePermissionEditor
@@ -4075,11 +4091,20 @@ function AdminTab() {
   }
 }
 
-function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
+function CreateUserModal({
+  roles,
+  onClose,
+  onSuccess
+}: {
+  roles: Role[];
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
   const t = useT();
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [roleId, setRoleId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -4088,14 +4113,18 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
     setLoading(true);
     setError(null);
     try {
-      await api.createUser({
+      const createdUser = await api.createUser({
         username,
         display_name: displayName,
         password
       });
+      if (roleId) {
+        await api.assignRole(createdUser.id, Number(roleId));
+      }
       setUsername("");
       setDisplayName("");
       setPassword("");
+      setRoleId("");
       onSuccess();
     } catch (e) {
       setError(errorMessage(e, t));
@@ -4105,44 +4134,72 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <div className="rounded border border-warm bg-canvas/95 p-4">
-      <h3 className="mb-3 text-sm font-semibold">{t("admin.createUser")}</h3>
-      <form onSubmit={(e) => void handleSubmit(e)} className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto]">
-        <div>
-          <FieldLabel>{t("admin.username")}</FieldLabel>
-          <input
-            required
-            minLength={2}
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
-          />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/35 p-3 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-2xl rounded border border-warm bg-canvas p-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold">{t("admin.createUser")}</h3>
+          <button onClick={onClose} className="rounded p-1 text-muted hover:bg-paper hover:text-ink" aria-label={t("common.cancel")}>
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <div>
-          <FieldLabel>{t("admin.displayName")}</FieldLabel>
-          <input
-            required
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <FieldLabel>{t("admin.password")}</FieldLabel>
-          <input
-            required
-            type="password"
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
-          />
-        </div>
-        <Button type="submit" busy={loading} className="mt-5">
-          {t("admin.create")}
-        </Button>
-      </form>
-      {error ? <p className="mt-2 text-xs text-error">{error}</p> : null}
+        <form onSubmit={(e) => void handleSubmit(e)} className="grid gap-3 md:grid-cols-2">
+          <div>
+            <FieldLabel>{t("admin.username")}</FieldLabel>
+            <input
+              required
+              minLength={2}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <FieldLabel>{t("admin.displayName")}</FieldLabel>
+            <input
+              required
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <FieldLabel>{t("admin.password")}</FieldLabel>
+            <input
+              required
+              type="password"
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="mt-1 w-full rounded border border-warm bg-paper px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <FieldLabel>{t("admin.role")}</FieldLabel>
+            <select
+              value={roleId}
+              onChange={(e) => setRoleId(e.target.value)}
+              className="mt-1 h-9 w-full rounded border border-warm bg-paper px-2 text-sm"
+            >
+              <option value="">{t("admin.role")}</option>
+              {roles.map((role) => (
+                <option key={role.id} value={role.id}>{role.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-2 flex justify-end gap-2 pt-1">
+            <Button type="button" onClick={onClose} className="bg-paper">
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" busy={loading}>
+              {t("admin.create")}
+            </Button>
+          </div>
+        </form>
+        {error ? <p className="mt-2 text-xs text-error">{error}</p> : null}
+      </div>
     </div>
   );
 }
@@ -4170,7 +4227,7 @@ function UserListTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded border border-warm">
+    <div className="overflow-x-auto rounded border border-warm bg-canvas">
       <table className="w-full min-w-[640px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-warm bg-paper/70 text-left font-mono text-[11px] uppercase text-muted">
