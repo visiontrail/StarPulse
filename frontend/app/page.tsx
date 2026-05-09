@@ -35,7 +35,7 @@ import {
   X,
   XCircle
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 
 import { BrandMark } from "@/components/brand";
@@ -165,6 +165,7 @@ type YangSchemaIndex = {
 const REALTIME_FAST_REFRESH_MS = 1500;
 const REALTIME_NORMAL_REFRESH_MS = 4000;
 const REALTIME_SLOW_REFRESH_MS = 8000;
+const UI_STORAGE_PREFIX = "star-pulse:ops-console:";
 
 export default function OperationsConsole() {
   const { state } = useSession();
@@ -207,7 +208,18 @@ function AuthenticatedConsole() {
   ];
 
   const availableTabs = tabs.filter(({ perm }) => hasPermission(perm));
-  const [tab, setTab] = useState<Tab>(() => availableTabs[0]?.id ?? "devices");
+  const [tab, setTab] = usePersistentState<Tab>(
+    "active-tab",
+    availableTabs[0]?.id ?? "devices",
+    isTab
+  );
+
+  useEffect(() => {
+    if (availableTabs.length === 0) return;
+    if (!availableTabs.some(({ id }) => id === tab)) {
+      setTab(availableTabs[0].id);
+    }
+  }, [availableTabs, setTab, tab]);
 
   return (
     <main className="flex min-h-screen min-h-dvh flex-col text-ink">
@@ -265,21 +277,34 @@ function DevicesTab() {
   const t = useT();
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const selectedDeviceIdRef = useRef<number | null>(null);
+  const didHandleSelectedDeviceChangeRef = useRef(false);
   const [devices, setDevices] = useState<Device[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<number | null>(null);
+  const [selectedDeviceId, setSelectedDeviceId] = usePersistentState<number | null>(
+    "devices:selected-device-id",
+    null,
+    isNullablePositiveNumber
+  );
   const [profile, setProfile] = useState<DeviceProfile | null>(null);
   const [snapshots, setSnapshots] = useState<ConfigSnapshot[]>([]);
-  const [datastore, setDatastore] = useState("running");
+  const [datastore, setDatastore] = usePersistentState("devices:datastore", "running", isNonEmptyString);
   const [lastTask, setLastTask] = useState<TaskRead | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [listMode, setListMode] = useState<DeviceListMode>("compact");
-  const [leftWidth, setLeftWidth] = useState(320);
-  const [rightWidth, setRightWidth] = useState(320);
-  const [statusCollapsed, setStatusCollapsed] = useState(false);
-  const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false);
-  const [detailMode, setDetailMode] = useState<DeviceDetailMode>("operational");
-  const [deviceQuery, setDeviceQuery] = useState("");
-  const [selectedObjectPath, setSelectedObjectPath] = useState("root");
+  const [listMode, setListMode] = usePersistentState<DeviceListMode>("devices:list-mode", "compact", isDeviceListMode);
+  const [leftWidth, setLeftWidth] = usePersistentState("devices:left-width", 320, isFiniteNumber);
+  const [rightWidth, setRightWidth] = usePersistentState("devices:right-width", 320, isFiniteNumber);
+  const [statusCollapsed, setStatusCollapsed] = usePersistentState("devices:status-collapsed", false, isBoolean);
+  const [workspaceCollapsed, setWorkspaceCollapsed] = usePersistentState("devices:workspace-collapsed", false, isBoolean);
+  const [detailMode, setDetailMode] = usePersistentState<DeviceDetailMode>(
+    "devices:detail-mode",
+    "operational",
+    isDeviceDetailMode
+  );
+  const [deviceQuery, setDeviceQuery] = usePersistentState("devices:query", "", isString);
+  const [selectedObjectPath, setSelectedObjectPath] = usePersistentState(
+    "devices:selected-object-path",
+    "root",
+    isNonEmptyString
+  );
   const [changeSummary, setChangeSummary] = useState("");
   const [changeReason, setChangeReason] = useState("");
   const [configBody, setConfigBody] = useState("");
@@ -336,7 +361,7 @@ function DevicesTab() {
         setError(errorMessage(e, t));
       }
     }
-  }, [t]);
+  }, [setSelectedDeviceId, t]);
 
   const loadProfile = useCallback(async (deviceId: number, options: RefreshOptions = {}) => {
     if (!options.silent) {
@@ -370,9 +395,13 @@ function DevicesTab() {
   useEffect(() => {
     if (selectedDeviceId !== null) void loadProfile(selectedDeviceId);
     else { setProfile(null); setSnapshots([]); }
-    setSelectedObjectPath("root");
+    if (didHandleSelectedDeviceChangeRef.current) {
+      setSelectedObjectPath("root");
+    } else {
+      didHandleSelectedDeviceChangeRef.current = true;
+    }
     setPreflight(null);
-  }, [loadProfile, selectedDeviceId]);
+  }, [loadProfile, selectedDeviceId, setSelectedObjectPath]);
 
   useEffect(() => {
     if (selectedDeviceId === null) return;
@@ -437,7 +466,7 @@ function DevicesTab() {
     setListMode(mode);
     if (mode === "compact") setLeftWidth((width) => Math.min(width, 440));
     if (mode === "expanded") setLeftWidth((width) => Math.max(width, 720));
-  }, []);
+  }, [setLeftWidth, setListMode]);
 
   const startResize = useCallback((
     side: "left" | "right",
@@ -477,7 +506,7 @@ function DevicesTab() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
-  }, [leftWidth, rightWidth]);
+  }, [leftWidth, rightWidth, setLeftWidth, setListMode, setRightWidth, setStatusCollapsed]);
 
   async function submitSnapshot() {
     if (!selectedDeviceId || configTaskRunning || !canCollect) return;
@@ -1415,9 +1444,11 @@ function DeviceWorkspace({
       {detailMode === "operational" ? (
         <div className="min-h-0 flex-1 overflow-auto p-3">
           <ConfigModelWorkspace
+            key={`devices:${device.id}:${datastore}:operational-tree`}
             data={operationalTree}
             schemaIndex={yangSchemaIndex}
             selectedPath={selectedPath}
+            storageKey={`devices:${device.id}:${datastore}:operational-tree`}
             treeTitle={t("workspace.netconfTree")}
             onSelectPath={onSelectPath}
           />
@@ -1425,9 +1456,11 @@ function DeviceWorkspace({
       ) : (
         <div className="min-h-0 flex-1 overflow-auto p-3">
           <ConfigModelWorkspace
+            key={`devices:${device.id}:${datastore}:config-tree`}
             data={configTree}
             schemaIndex={yangSchemaIndex}
             selectedPath={selectedPath}
+            storageKey={`devices:${device.id}:${datastore}:config-tree`}
             treeTitle={t("workspace.configTree")}
             onSelectPath={onSelectPath}
             onOpenChange={openConfigChange}
@@ -1464,6 +1497,7 @@ function ConfigModelWorkspace({
   data,
   schemaIndex,
   selectedPath,
+  storageKey,
   treeTitle,
   onSelectPath,
   onOpenChange
@@ -1471,15 +1505,30 @@ function ConfigModelWorkspace({
   data: Record<string, unknown>;
   schemaIndex: YangSchemaIndex;
   selectedPath: string;
+  storageKey: string;
   treeTitle: string;
   onSelectPath: (path: string) => void;
   onOpenChange?: (target: ConfigChangeTarget) => void;
 }) {
   const t = useT();
   const canEdit = Boolean(onOpenChange);
-  const [treeOpenPaths, setTreeOpenPaths] = useState<Set<string>>(() => new Set(["root", "root.data"]));
-  const [treeWidth, setTreeWidth] = useState(300);
-  const userResizedRef = useRef(false);
+  const [treeOpenPathList, setTreeOpenPathList] = usePersistentState<string[]>(
+    `${storageKey}:open-paths`,
+    ["root", "root.data"],
+    isStringArray
+  );
+  const treeOpenPaths = useMemo(() => new Set(treeOpenPathList), [treeOpenPathList]);
+  const setTreeOpenPaths = useCallback((
+    nextValue: Set<string> | ((current: Set<string>) => Set<string>)
+  ) => {
+    setTreeOpenPathList((currentList) => {
+      const current = new Set(currentList);
+      const next = typeof nextValue === "function" ? nextValue(current) : nextValue;
+      return Array.from(next);
+    });
+  }, [setTreeOpenPathList]);
+  const [treeWidth, setTreeWidth] = usePersistentState(`${storageKey}:width`, 300, isFiniteNumber);
+  const userResizedRef = useRef(readStoredValue(`${storageKey}:width`, null, isNullableFiniteNumber) !== null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -1494,7 +1543,7 @@ function ConfigModelWorkspace({
     // left-pad + chevron + gap + label(min) + type-badge + count + right-pad
     const needed = (8 + maxDepth * 16) + 16 + 6 + 120 + 54 + 44 + 16;
     setTreeWidth(Math.max(280, Math.min(needed, 640)));
-  }, [treeOpenPaths]);
+  }, [setTreeWidth, treeOpenPaths]);
 
   function handleDragStart(e: React.MouseEvent) {
     e.preventDefault();
@@ -5169,6 +5218,85 @@ function AuditTab() {
 }
 
 // ── Shared sub-components ──────────────────────────────────────────────────
+
+function usePersistentState<T>(
+  key: string,
+  initialValue: T,
+  isValid: (value: unknown) => value is T
+): [T, Dispatch<SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => readStoredValue(key, initialValue, isValid));
+
+  useEffect(() => {
+    writeStoredValue(key, value);
+  }, [key, value]);
+
+  return [value, setValue];
+}
+
+function readStoredValue<T>(
+  key: string,
+  fallback: T,
+  isValid: (value: unknown) => value is T
+): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(`${UI_STORAGE_PREFIX}${key}`);
+    if (raw === null) return fallback;
+    const parsed = JSON.parse(raw);
+    return isValid(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStoredValue<T>(key: string, value: T) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${UI_STORAGE_PREFIX}${key}`, JSON.stringify(value));
+  } catch {
+    // Storage can be unavailable in private browsing or restricted environments.
+  }
+}
+
+function isTab(value: unknown): value is Tab {
+  return value === "devices" || value === "changes" || value === "admin" || value === "audit";
+}
+
+function isDeviceListMode(value: unknown): value is DeviceListMode {
+  return value === "collapsed" || value === "compact" || value === "expanded";
+}
+
+function isDeviceDetailMode(value: unknown): value is DeviceDetailMode {
+  return value === "operational" || value === "config";
+}
+
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function isNullablePositiveNumber(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isInteger(value) && value > 0);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
 
 function useRealtimeRefresh(
   refresh: () => void | Promise<void>,
